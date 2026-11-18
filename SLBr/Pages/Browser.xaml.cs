@@ -619,7 +619,7 @@ namespace SLBr.Pages
 (function() {
     try {
         if (!/chatgpt\.com|openai\.com/i.test(location.hostname)) return;
-        const rxTest = /chatgpt|openai|gpt-4|gpt-5/i;
+        const rxTest = /chatgpt|openai|gpt-\d/i;
         const replaceTextValue = (str) => {
             if (!str || !rxTest.test(str)) return str;
             return str
@@ -629,7 +629,7 @@ namespace SLBr.Pages
                 .replace(/ChatGPT/gi, 'Copilot')
                 .replace(/OpenAI/gi, 'Microsoft')
                 .replace(/GPT-4o\s*mini/gi, 'Copilot Fast')
-                .replace(/GPT-4o|GPT-4\.5|GPT-4|GPT-5/gi, 'Copilot');
+                .replace(/GPT-\d+(?:\.\d+)?(?:o|-mini|-pro)?/gi, 'Copilot');
         };
         const shouldSkipNode = (node) => {
             if (!node || !node.parentElement) return true;

@@ -79,8 +79,14 @@ for %%D in ("%EXE_PATH%") do (
 )
 :: Close any stuck/hidden SLBr background process holding the single-instance mutex
 taskkill /F /IM SLBr.exe >nul 2>&1
+if exist "%REPO_DIR%\SLBr\obj\Release\net9.0-windows7.0\win-x64\apphost.exe" (
+    copy /y "%REPO_DIR%\SLBr\obj\Release\net9.0-windows7.0\win-x64\apphost.exe" "!EXE_DIR!SLBr.exe" >nul 2>&1
+)
 if exist "%REPO_DIR%\SLBr\obj\Release\net9.0-windows7.0\win-x64\SLBr.dll" (
     copy /y "%REPO_DIR%\SLBr\obj\Release\net9.0-windows7.0\win-x64\SLBr.dll" "!EXE_DIR!SLBr.dll" >nul 2>&1
+)
+if exist "%REPO_DIR%\SLBr\Resources\SLBr.ico" (
+    copy /y "%REPO_DIR%\SLBr\Resources\SLBr.ico" "!EXE_DIR!Resources\SLBr.ico" >nul 2>&1
 )
 echo Launching SLBr Browser...
 start "" "%EXE_PATH%"

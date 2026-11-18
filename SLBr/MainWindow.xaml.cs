@@ -188,6 +188,13 @@ namespace SLBr
         public nint? Handle;
         private void InitializeWindow()
         {
+            try
+            {
+                string IconFile = System.IO.Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Resources", "SLBr.ico");
+                if (System.IO.File.Exists(IconFile))
+                    Icon = System.Windows.Media.Imaging.BitmapFrame.Create(new Uri(IconFile, UriKind.Absolute));
+            }
+            catch { }
             ID = Utils.GenerateRandomId();
             App.Instance.AllWindows.Add(this);
             if (App.Instance.WindowsSaves.Count < App.Instance.AllWindows.Count)

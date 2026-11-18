@@ -1733,7 +1733,7 @@ namespace SLBr
                     Profiles.Insert(0, CurrentProfile);
                 }
             }
-            AppUserModelID = $"SLT.SLBr.{CurrentProfile.Name}";
+            AppUserModelID = $"Orbit.SLBr.{CurrentProfile.Name}";
             DllUtils.SetCurrentProcessExplicitAppUserModelID(AppUserModelID);
 
             _Mutex = new Mutex(true, AppUserModelID);
