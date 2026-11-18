@@ -117,6 +117,8 @@ exit /b 0
 
 ## Notable Chrome-Like Features
 
+- **Default Dark Mode (UI + Web Pages):** Opens in sleek Dark Mode out of the box with Smart Dark Mode enabled for websites.
+- **Built-in Copilot Stealth Masking:** Automatically masks `chatgpt.com` / `chat.openai.com` as **Copilot** (`https://copilot.microsoft.com`) across the address bar, tab title, window title, tab favicon, hover status bar, and live page DOM/logos while preserving code blocks and user prompts.
 - **Multiple Web Engines:** Switch seamlessly between **Chromium (CEF)** and **Microsoft Edge (WebView2)** engines.
 - **Horizontal & Vertical Tabs + Tab Groups:** Organize tabs with color-coded collapsible groups, vertical or horizontal layout, and automatic inactive tab unloading to save RAM.
 - **Built-in Ad & Tracker Blocker:** Customize filter lists (EasyList, EasyPrivacy, AdGuard, Peter Lowe, NoCoin).

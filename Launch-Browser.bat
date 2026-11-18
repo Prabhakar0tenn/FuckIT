@@ -73,7 +73,13 @@ pause
 exit /b 1
 
 :FoundExe
-for %%D in ("%EXE_PATH%") do cd /d "%%~dpD"
+for %%D in ("%EXE_PATH%") do (
+    set "EXE_DIR=%%~dpD"
+    cd /d "%%~dpD"
+)
+if exist "%REPO_DIR%\SLBr\obj\Release\net9.0-windows7.0\win-x64\SLBr.dll" (
+    copy /y "%REPO_DIR%\SLBr\obj\Release\net9.0-windows7.0\win-x64\SLBr.dll" "!EXE_DIR!SLBr.dll" >nul 2>&1
+)
 echo Launching SLBr Browser...
 start "" "%EXE_PATH%"
 exit /b 0

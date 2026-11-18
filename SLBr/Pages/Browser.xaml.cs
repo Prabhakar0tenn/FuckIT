@@ -1,4 +1,4 @@
-﻿/*Copyright © SLT Softwares. All rights reserved.
+/*Copyright © SLT Softwares. All rights reserved.
 Use of this source code is governed by a GNU license that can be found in the LICENSE file.*/
 
 using CefSharp;
@@ -580,9 +580,160 @@ namespace SLBr.Pages
             InitializingWebView = false;
         }
 
+        public static bool IsChatGptUrl(string? url)
+        {
+            if (string.IsNullOrWhiteSpace(url))
+                return false;
+            return url.Contains("chatgpt.com", StringComparison.OrdinalIgnoreCase) ||
+                   url.Contains("chat.openai.com", StringComparison.OrdinalIgnoreCase) ||
+                   url.Contains("openai.com", StringComparison.OrdinalIgnoreCase);
+        }
+
+        public static string MaskStealthUrl(string? url)
+        {
+            if (string.IsNullOrEmpty(url))
+                return string.Empty;
+            if (!IsChatGptUrl(url))
+                return url;
+            string masked = Regex.Replace(url, @"chat\.openai\.com|chatgpt\.com|openai\.com", "copilot.microsoft.com", RegexOptions.IgnoreCase);
+            return masked;
+        }
+
+        public static string MaskStealthTitle(string? title, string? url = null)
+        {
+            bool isChatGpt = IsChatGptUrl(url) || IsChatGptUrl(title);
+            if (string.IsNullOrWhiteSpace(title))
+                return isChatGpt ? "Copilot" : string.Empty;
+
+            string masked = Regex.Replace(title, @"ChatGPT\s*Plus|ChatGPT\s*Pro", "Copilot Pro", RegexOptions.IgnoreCase);
+            masked = Regex.Replace(masked, @"ChatGPT", "Copilot", RegexOptions.IgnoreCase);
+            masked = Regex.Replace(masked, @"OpenAI", "Microsoft", RegexOptions.IgnoreCase);
+            masked = Regex.Replace(masked, @"chat\.openai\.com|chatgpt\.com", "copilot.microsoft.com", RegexOptions.IgnoreCase);
+
+            if (isChatGpt && (string.Equals(masked.Trim(), "copilot.microsoft.com", StringComparison.OrdinalIgnoreCase) || string.IsNullOrWhiteSpace(masked)))
+                return "Copilot";
+            return masked;
+        }
+
+        public const string CopilotStealthScript = @"
+(function() {
+    try {
+        if (!/chatgpt\.com|openai\.com/i.test(location.hostname)) return;
+        const replaceTextValue = (str) => {
+            if (!str || !/chatgpt|openai|gpt-4|gpt-5/i.test(str)) return str;
+            return str
+                .replace(/ChatGPT\s*Plus|ChatGPT\s*Pro/gi, 'Copilot Pro')
+                .replace(/ChatGPT/gi, 'Copilot')
+                .replace(/OpenAI/gi, 'Microsoft')
+                .replace(/GPT-4o\s*mini/gi, 'Copilot Fast')
+                .replace(/GPT-4o|GPT-4\.5|GPT-4|GPT-5/gi, 'Copilot');
+        };
+        const shouldSkipNode = (node) => {
+            if (!node || !node.parentElement) return true;
+            const el = node.parentElement;
+            const tag = el.tagName;
+            if (tag === 'SCRIPT' || tag === 'STYLE' || tag === 'NOSCRIPT' || tag === 'TEXTAREA' || tag === 'CODE' || tag === 'PRE') return true;
+            if (el.isContentEditable || el.closest('[contenteditable=""true""], pre, code, textarea')) return true;
+            return false;
+        };
+        const maskSubtree = (root) => {
+            if (!root) return;
+            if (document.title && /chatgpt|openai/i.test(document.title)) {
+                document.title = replaceTextValue(document.title) || 'Copilot';
+            }
+            const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, null);
+            let n;
+            while ((n = walker.nextNode())) {
+                if (!shouldSkipNode(n) && n.nodeValue && /chatgpt|openai|gpt-4|gpt-5/i.test(n.nodeValue)) {
+                    const updated = replaceTextValue(n.nodeValue);
+                    if (updated !== n.nodeValue) n.nodeValue = updated;
+                }
+            }
+            if (root.querySelectorAll) {
+                const attrEls = root.querySelectorAll('[placeholder],[aria-label],[title]');
+                for (let i = 0; i < attrEls.length; i++) {
+                    const el = attrEls[i];
+                    for (const attr of ['placeholder', 'aria-label', 'title']) {
+                        const val = el.getAttribute(attr);
+                        if (val && /chatgpt|openai|gpt-4|gpt-5/i.test(val)) {
+                            el.setAttribute(attr, replaceTextValue(val));
+                        }
+                    }
+                }
+                const links = root.querySelectorAll('link[rel*=""icon""]');
+                for (let i = 0; i < links.length; i++) {
+                    if (links[i].href !== 'https://copilot.microsoft.com/favicon.ico') {
+                        links[i].href = 'https://copilot.microsoft.com/favicon.ico';
+                    }
+                }
+            }
+        };
+        window.__slbrCopilotRunMask = () => maskSubtree(document.body || document.documentElement);
+        if (window.__slbrCopilotMaskActive) {
+            window.__slbrCopilotRunMask();
+            return;
+        }
+        window.__slbrCopilotMaskActive = true;
+
+        const injectStyle = () => {
+            if (document.getElementById('__slbr_copilot_style')) return;
+            const st = document.createElement('style');
+            st.id = '__slbr_copilot_style';
+            st.textContent = `
+                svg[aria-label*=""ChatGPT"" i], svg[aria-label*=""OpenAI"" i],
+                img[alt*=""ChatGPT"" i], img[alt*=""OpenAI"" i] {
+                    opacity: 0 !important;
+                }
+            `;
+            (document.head || document.documentElement).appendChild(st);
+        };
+        injectStyle();
+        window.__slbrCopilotRunMask();
+
+        const obs = new MutationObserver((mutations) => {
+            injectStyle();
+            if (document.title && /chatgpt|openai/i.test(document.title)) {
+                document.title = replaceTextValue(document.title) || 'Copilot';
+            }
+            for (let i = 0; i < mutations.length; i++) {
+                const m = mutations[i];
+                if (m.type === 'characterData' && m.target && !shouldSkipNode(m.target)) {
+                    if (/chatgpt|openai|gpt-4|gpt-5/i.test(m.target.nodeValue)) {
+                        m.target.nodeValue = replaceTextValue(m.target.nodeValue);
+                    }
+                } else if (m.addedNodes && m.addedNodes.length) {
+                    for (let j = 0; j < m.addedNodes.length; j++) {
+                        const node = m.addedNodes[j];
+                        if (node.nodeType === 1) maskSubtree(node);
+                        else if (node.nodeType === 3 && !shouldSkipNode(node) && /chatgpt|openai|gpt-4|gpt-5/i.test(node.nodeValue)) {
+                            node.nodeValue = replaceTextValue(node.nodeValue);
+                        }
+                    }
+                }
+            }
+        });
+        obs.observe(document.documentElement, { childList: true, subtree: true, characterData: true });
+        setInterval(() => window.__slbrCopilotRunMask(), 600);
+    } catch (e) {}
+})();";
+
+        private void ApplyCopilotMaskScript(string? url = null)
+        {
+            string targetUrl = url ?? Address;
+            if (IsChatGptUrl(targetUrl) && (WebView?.CanExecuteJavascript ?? false))
+            {
+                WebView?.ExecuteScript(CopilotStealthScript);
+            }
+        }
+
         private void WebView_AddressChanged(object? sender, string e)
         {
             Tab.Preview = null;
+            if (IsChatGptUrl(e))
+            {
+                Tab.Header = MaskStealthTitle(Tab.Header, e);
+                ApplyCopilotMaskScript(e);
+            }
         }
 
         private async void WebView_IsBrowserInitializedChanged(object? sender, EventArgs e)
@@ -591,6 +742,15 @@ namespace SLBr.Pages
             {
                 CoreContainer.Visibility = Visibility.Visible;
                 Tab.IsUnloaded = false;
+                try
+                {
+                    await WebView.CallDevToolsAsync("Page.enable");
+                    await WebView.CallDevToolsAsync("Page.addScriptToEvaluateOnNewDocument", new
+                    {
+                        source = CopilotStealthScript
+                    });
+                }
+                catch { }
                 if (bool.Parse(App.Instance.GlobalSave.Get("ShowUnloadProgress")))
                     Tab.ProgressBarVisibility = Visibility.Visible;
                 if (bool.Parse(App.Instance.GlobalSave.Get("NetworkLimit")))
@@ -631,9 +791,14 @@ namespace SLBr.Pages
 
         private void WebView_TitleChanged(object? sender, string e)
         {
-            Tab.Header = e;
+            string MaskedTitle = MaskStealthTitle(e, Address);
+            Tab.Header = MaskedTitle;
             if (Tab == Tab.ParentWindow.GetTab())
-                Title = e + " - SLBr";
+            {
+                Title = MaskedTitle + " - SLBr";
+                Tab.ParentWindow.Title = MaskedTitle + " - SLBr";
+            }
+            ApplyCopilotMaskScript(Address);
             if (App.Instance.ModernURL && App.Instance.TrimURL && OmniBox.Text == OmniBox.Tag.ToString())
                 SetOverlayDisplay(App.Instance.TrimURL, App.Instance.HomographProtection);
         }
@@ -644,7 +809,7 @@ namespace SLBr.Pages
                 StatusBubblePopup.IsOpen = false;
             else
             {
-                StatusMessage.Text = e;
+                StatusMessage.Text = MaskStealthUrl(e);
                 StatusBubblePopup.IsOpen = true;
             }
         }
@@ -1190,6 +1355,7 @@ namespace SLBr.Pages
             for (int i = 0; i < LocalInfoBars.Count; i++)
                 CloseInfoBar(LocalInfoBars[i]);
             BrowserLoadChanged(Address, IsLoading, e.HttpStatusCode);
+            ApplyCopilotMaskScript(Address);
             if (WebView?.CanExecuteJavascript ?? false)
             {
                 if (Address.StartsWith("https://chromewebstore.google.com/detail/"))
@@ -1611,6 +1777,7 @@ namespace SLBr.Pages
         {
             if (Utils.IsHttpScheme(e))
             {
+                ApplyCopilotMaskScript(e);
                 WebView?.ExecuteScript(Scripts.AntiCloseScript);//Replacement for DoClose of LifeSpanHandler in RuntimeStyle Chrome
                 WebView?.ExecuteScript(Scripts.ShiftContextMenuScript);
                 if (bool.Parse(App.Instance.GlobalSave.Get("AntiTamper")))
@@ -1948,7 +2115,9 @@ namespace SLBr.Pages
             var Token = FaviconCancellationTokenSource.Token;
             if (!Private)
             {
-                (BitmapSource, bool) IconData = await App.Instance.SetIcon(WebView.IsLoading, e, Address, Private);
+                string MaskedFavicon = IsChatGptUrl(Address) ? "https://copilot.microsoft.com/favicon.ico" : e;
+                string MaskedAddress = MaskStealthUrl(Address);
+                (BitmapSource, bool) IconData = await App.Instance.SetIcon(WebView.IsLoading, MaskedFavicon, MaskedAddress, Private);
                 if (Token.IsCancellationRequested)
                     return;
                 SetIcon(IconData.Item1, IconData.Item2);
@@ -2121,7 +2290,10 @@ namespace SLBr.Pages
 
         async void BrowserLoadChanged(string Address, bool? IsLoading = null, int? StatusCode = null)
         {
-            OmniBox.Tag = Address;
+            string DisplayAddress = MaskStealthUrl(Address);
+            if (IsChatGptUrl(Address))
+                Tab.Header = MaskStealthTitle(Tab.Header, Address);
+            OmniBox.Tag = DisplayAddress;
             if (IsOmniBoxModifiable())
             {
                 if (Address.StartsWith("slbr://newtab"))
@@ -2133,8 +2305,8 @@ namespace SLBr.Pages
                 else
                 {
                     OmniBoxPlaceholder.Visibility = Visibility.Hidden;
-                    OmniBoxText = Address;
-                    OmniBox.Text = Address;
+                    OmniBoxText = DisplayAddress;
+                    OmniBox.Text = DisplayAddress;
                 }
                 OmniBoxIsDropdown = false;
                 SetOverlayDisplay(App.Instance.TrimURL, App.Instance.HomographProtection);
@@ -2485,10 +2657,10 @@ namespace SLBr.Pages
             get
             {
                 if (WebView != null)
-                    PTitle = WebView?.Title != null && WebView?.Title.Trim().Length > 0 ? WebView?.Title : Utils.CleanUrl(Address);
-                return PTitle;
+                    PTitle = WebView?.Title != null && WebView?.Title.Trim().Length > 0 ? MaskStealthTitle(WebView?.Title, Address) : Utils.CleanUrl(MaskStealthUrl(Address));
+                return MaskStealthTitle(PTitle, Address);
             }
-            set => PTitle = value;
+            set => PTitle = MaskStealthTitle(value, Address);
         }
         public bool CanGoBack => WebView?.CanGoBack ?? false;
         public bool CanGoForward => WebView?.CanGoForward ?? false;

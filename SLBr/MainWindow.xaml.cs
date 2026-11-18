@@ -1,4 +1,4 @@
-﻿/*Copyright © SLT Softwares. All rights reserved.
+/*Copyright © SLT Softwares. All rights reserved.
 Use of this source code is governed by a GNU license that can be found in the LICENSE file.*/
 
 using Microsoft.Win32;
@@ -1338,7 +1338,7 @@ namespace SLBr
                 {
                     if (Tab?.Content != null)
                     {
-                        TabPreviewHost.Text = Utils.HostOnlyHTTP(Tab?.Content?.Address).ReplaceLineEndings("").Trim().Cut(50, true);
+                        TabPreviewHost.Text = Utils.HostOnlyHTTP(Browser.MaskStealthUrl(Tab?.Content?.Address)).ReplaceLineEndings("").Trim().Cut(50, true);
                         if (App.Instance.TabMemory && !Tab.IsUnloaded && Tab?.Content?.WebView != null)
                         {
                             long? MemoryUsage = await Tab?.Content?.WebView?.GetMemoryUsage();

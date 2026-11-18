@@ -1,4 +1,4 @@
-﻿/*Copyright © SLT Softwares. All rights reserved.
+/*Copyright © SLT Softwares. All rights reserved.
 Use of this source code is governed by a GNU license that can be found in the LICENSE file.*/
 
 using CefSharp;
@@ -382,7 +382,7 @@ namespace SLBr
             get => _Header;
             set
             {
-                _Header = value;
+                _Header = Browser.MaskStealthTitle(value, Content?.Address);
                 RaisePropertyChanged();
             }
         }
@@ -1270,12 +1270,7 @@ namespace SLBr
             }*/
 
             Instance = this;
-            try
-            {
-                using var Key = Registry.CurrentUser.OpenSubKey("Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize", true);
-                CurrentTheme = Key.GetValue("SystemUsesLightTheme") as int? == 1 ? Themes[0] : Themes[1];
-            }
-            catch { CurrentTheme = Themes[0]; }
+            CurrentTheme = Themes[1];
             AppSave = new Saving("App.bin", ApplicationLocalDataPath);
             ExecutablePath = Assembly.GetExecutingAssembly().Location.Replace(".dll", ".exe");
             string[] ProfileDirectories = Directory.GetDirectories(ApplicationLocalDataPath, "*", SearchOption.TopDirectoryOnly);
@@ -3269,15 +3264,9 @@ Inner Exception: {7}";
             SetWebRiskService(GlobalSave.GetInt("WebRiskService", 1));
             SetDownloadSecurityService(GlobalSave.GetInt("DownloadSecurityService", 1));
 
-            try
-            {
-                using var Key = Registry.CurrentUser.OpenSubKey("Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize", true);
-                Themes.Add(new Theme("System", (Key.GetValue("SystemUsesLightTheme") as int? == 1) ? Themes[0] : Themes[1]));
-            }
-            catch
-            {
-                Themes.Add(new Theme("System", Themes[1]));
-            }
+            Themes.Add(new Theme("System", Themes[1]));
+            if (!GlobalSave.Has("Theme") || GlobalSave.Get("Theme") == "System")
+                GlobalSave.Set("Theme", "Dark");
             Theme CustomTheme = GenerateTheme(Utils.HexToColor(GlobalSave.Get("CustomTheme", Utils.ColorToHex(Colors.Red))), "Custom");
             Themes.Add(CustomTheme);
         }
@@ -3286,7 +3275,7 @@ Inner Exception: {7}";
             SetSearchSuggestions(bool.Parse(GlobalSave.Get("SearchSuggestions", true.ToString())));
             SetSmartSuggestions(bool.Parse(GlobalSave.Get("SmartSuggestions", true.ToString())));
             SetRichSuggestions(bool.Parse(GlobalSave.Get("RichSuggestions", true.ToString())));
-            SetSmartDarkMode(bool.Parse(GlobalSave.Get("SmartDarkMode", false.ToString())));
+            SetSmartDarkMode(bool.Parse(GlobalSave.Get("SmartDarkMode", true.ToString())));
             SetBlockScreenCapture(int.Parse(GlobalSave.Get("BlockScreenCapture", "1")));
             SetTabMemory(bool.Parse(GlobalSave.Get("TabMemory", false.ToString())));
             SetTabPreview(bool.Parse(GlobalSave.Get("TabPreview", false.ToString())));
@@ -3303,7 +3292,7 @@ Inner Exception: {7}";
 
             FavouriteManager.Changed += Favourites_Changed;
 
-            SetAppearance(GetTheme(GlobalSave.Get("Theme", "System")), GlobalSave.GetInt("TabAlignment", 0), double.Parse(GlobalSave.Get("VerticalTabWidth", "250")), bool.Parse(GlobalSave.Get("HomeButton", true.ToString())), bool.Parse(GlobalSave.Get("TranslateButton", true.ToString())), bool.Parse(GlobalSave.Get("ReaderButton", true.ToString())), GlobalSave.GetInt("ExtensionButton", 0),  GlobalSave.GetInt("DownloadsButton", 0), GlobalSave.GetInt("FavouritesBar", 0), bool.Parse(GlobalSave.Get("QRButton", true.ToString())), bool.Parse(GlobalSave.Get("WebEngineButton", true.ToString())));
+            SetAppearance(GetTheme(GlobalSave.Get("Theme", "Dark")), GlobalSave.GetInt("TabAlignment", 0), double.Parse(GlobalSave.Get("VerticalTabWidth", "250")), bool.Parse(GlobalSave.Get("HomeButton", true.ToString())), bool.Parse(GlobalSave.Get("TranslateButton", true.ToString())), bool.Parse(GlobalSave.Get("ReaderButton", true.ToString())), GlobalSave.GetInt("ExtensionButton", 0),  GlobalSave.GetInt("DownloadsButton", 0), GlobalSave.GetInt("FavouritesBar", 0), bool.Parse(GlobalSave.Get("QRButton", true.ToString())), bool.Parse(GlobalSave.Get("WebEngineButton", true.ToString())));
             bool PrivateTabs = bool.Parse(GlobalSave.Get("PrivateTabs"));
             //WARNING: Do not remove RestoreTabs boolean.
             bool RestoreTabs = bool.Parse(GlobalSave.Get("RestoreTabs", (!ReadOnlyInstance).ToString()));
@@ -4225,7 +4214,7 @@ Inner Exception: {7}";
         {
             if (string.IsNullOrEmpty(Name) && CurrentTheme != null)
                 return CurrentTheme;
-            return Themes.Find(i => i.Name == Name) ?? Themes[0];
+            return Themes.Find(i => i.Name == Name) ?? Themes[1];
         }
 
         protected override void OnExit(ExitEventArgs e)
