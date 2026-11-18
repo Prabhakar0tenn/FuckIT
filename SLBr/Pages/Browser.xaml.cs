@@ -619,10 +619,13 @@ namespace SLBr.Pages
 (function() {
     try {
         if (!/chatgpt\.com|openai\.com/i.test(location.hostname)) return;
+        const rxTest = /chatgpt|openai|gpt-4|gpt-5/i;
         const replaceTextValue = (str) => {
-            if (!str || !/chatgpt|openai|gpt-4|gpt-5/i.test(str)) return str;
+            if (!str || !rxTest.test(str)) return str;
             return str
                 .replace(/ChatGPT\s*Plus|ChatGPT\s*Pro/gi, 'Copilot Pro')
+                .replace(/Ask\s+ChatGPT/gi, 'Ask Copilot')
+                .replace(/Message\s+ChatGPT/gi, 'Message Copilot')
                 .replace(/ChatGPT/gi, 'Copilot')
                 .replace(/OpenAI/gi, 'Microsoft')
                 .replace(/GPT-4o\s*mini/gi, 'Copilot Fast')
@@ -632,88 +635,99 @@ namespace SLBr.Pages
             if (!node || !node.parentElement) return true;
             const el = node.parentElement;
             const tag = el.tagName;
-            if (tag === 'SCRIPT' || tag === 'STYLE' || tag === 'NOSCRIPT' || tag === 'TEXTAREA' || tag === 'CODE' || tag === 'PRE') return true;
-            if (el.isContentEditable || el.closest('[contenteditable=""true""], pre, code, textarea')) return true;
+            if (tag === 'SCRIPT' || tag === 'STYLE' || tag === 'NOSCRIPT' || tag === 'CODE' || tag === 'PRE') return true;
+            if (el.closest && el.closest('pre, code')) return true;
+            if (tag === 'TEXTAREA' || el.isContentEditable || (el.closest && el.closest('[contenteditable=""true""]'))) {
+                const txt = (node.nodeValue || '').trim();
+                if (/^(Ask|Message)\s+ChatGPT/i.test(txt)) return false;
+                return true;
+            }
             return false;
         };
         const maskSubtree = (root) => {
-            if (!root) return;
-            if (document.title && /chatgpt|openai/i.test(document.title)) {
-                document.title = replaceTextValue(document.title) || 'Copilot';
-            }
-            const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, null);
-            let n;
-            while ((n = walker.nextNode())) {
-                if (!shouldSkipNode(n) && n.nodeValue && /chatgpt|openai|gpt-4|gpt-5/i.test(n.nodeValue)) {
-                    const updated = replaceTextValue(n.nodeValue);
-                    if (updated !== n.nodeValue) n.nodeValue = updated;
+            try {
+                if (!root) return;
+                if (document.title && rxTest.test(document.title)) {
+                    document.title = replaceTextValue(document.title) || 'Copilot';
                 }
-            }
-            if (root.querySelectorAll) {
-                const attrEls = root.querySelectorAll('[placeholder],[aria-label],[title]');
-                for (let i = 0; i < attrEls.length; i++) {
-                    const el = attrEls[i];
-                    for (const attr of ['placeholder', 'aria-label', 'title']) {
-                        const val = el.getAttribute(attr);
-                        if (val && /chatgpt|openai|gpt-4|gpt-5/i.test(val)) {
-                            el.setAttribute(attr, replaceTextValue(val));
+                const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, null);
+                let n;
+                while ((n = walker.nextNode())) {
+                    if (!shouldSkipNode(n) && n.nodeValue && rxTest.test(n.nodeValue)) {
+                        const updated = replaceTextValue(n.nodeValue);
+                        if (updated !== n.nodeValue) n.nodeValue = updated;
+                    }
+                }
+                if (root.querySelectorAll) {
+                    const attrEls = root.querySelectorAll('[placeholder],[data-placeholder],[aria-label],[title],[alt]');
+                    for (let i = 0; i < attrEls.length; i++) {
+                        const el = attrEls[i];
+                        for (const attr of ['placeholder', 'data-placeholder', 'aria-label', 'title', 'alt']) {
+                            const val = el.getAttribute(attr);
+                            if (val && rxTest.test(val)) {
+                                el.setAttribute(attr, replaceTextValue(val));
+                            }
                         }
                     }
                 }
-                const links = root.querySelectorAll('link[rel*=""icon""]');
-                for (let i = 0; i < links.length; i++) {
-                    if (links[i].href !== 'https://copilot.microsoft.com/favicon.ico') {
-                        links[i].href = 'https://copilot.microsoft.com/favicon.ico';
-                    }
-                }
-            }
+            } catch (e) {}
         };
-        window.__slbrCopilotRunMask = () => maskSubtree(document.body || document.documentElement);
-        if (window.__slbrCopilotMaskActive) {
-            window.__slbrCopilotRunMask();
-            return;
-        }
+        window.__slbrCopilotRunMask = () => {
+            maskSubtree(document.body || document.documentElement);
+        };
+        window.__slbrCopilotRunMask();
+        if (window.__slbrCopilotMaskActive) return;
         window.__slbrCopilotMaskActive = true;
 
-        const injectStyle = () => {
-            if (document.getElementById('__slbr_copilot_style')) return;
-            const st = document.createElement('style');
-            st.id = '__slbr_copilot_style';
-            st.textContent = `
-                svg[aria-label*=""ChatGPT"" i], svg[aria-label*=""OpenAI"" i],
-                img[alt*=""ChatGPT"" i], img[alt*=""OpenAI"" i] {
-                    opacity: 0 !important;
-                }
-            `;
-            (document.head || document.documentElement).appendChild(st);
-        };
-        injectStyle();
-        window.__slbrCopilotRunMask();
+        setInterval(() => {
+            try { window.__slbrCopilotRunMask(); } catch (e) {}
+        }, 250);
 
-        const obs = new MutationObserver((mutations) => {
-            injectStyle();
-            if (document.title && /chatgpt|openai/i.test(document.title)) {
-                document.title = replaceTextValue(document.title) || 'Copilot';
-            }
-            for (let i = 0; i < mutations.length; i++) {
-                const m = mutations[i];
-                if (m.type === 'characterData' && m.target && !shouldSkipNode(m.target)) {
-                    if (/chatgpt|openai|gpt-4|gpt-5/i.test(m.target.nodeValue)) {
-                        m.target.nodeValue = replaceTextValue(m.target.nodeValue);
-                    }
-                } else if (m.addedNodes && m.addedNodes.length) {
-                    for (let j = 0; j < m.addedNodes.length; j++) {
-                        const node = m.addedNodes[j];
-                        if (node.nodeType === 1) maskSubtree(node);
-                        else if (node.nodeType === 3 && !shouldSkipNode(node) && /chatgpt|openai|gpt-4|gpt-5/i.test(node.nodeValue)) {
-                            node.nodeValue = replaceTextValue(node.nodeValue);
-                        }
-                    }
+        const attachObserver = () => {
+            try {
+                const target = document.documentElement || document.body;
+                if (!target) {
+                    setTimeout(attachObserver, 50);
+                    return;
                 }
-            }
-        });
-        obs.observe(document.documentElement, { childList: true, subtree: true, characterData: true });
-        setInterval(() => window.__slbrCopilotRunMask(), 600);
+                const obs = new MutationObserver((mutations) => {
+                    try {
+                        if (document.title && rxTest.test(document.title)) {
+                            document.title = replaceTextValue(document.title) || 'Copilot';
+                        }
+                        for (let i = 0; i < mutations.length; i++) {
+                            const m = mutations[i];
+                            if (m.type === 'attributes' && m.target && m.attributeName) {
+                                const val = m.target.getAttribute(m.attributeName);
+                                if (val && rxTest.test(val)) {
+                                    m.target.setAttribute(m.attributeName, replaceTextValue(val));
+                                }
+                            } else if (m.type === 'characterData' && m.target && !shouldSkipNode(m.target)) {
+                                if (rxTest.test(m.target.nodeValue)) {
+                                    m.target.nodeValue = replaceTextValue(m.target.nodeValue);
+                                }
+                            } else if (m.addedNodes && m.addedNodes.length) {
+                                for (let j = 0; j < m.addedNodes.length; j++) {
+                                    const node = m.addedNodes[j];
+                                    if (node.nodeType === 1) maskSubtree(node);
+                                    else if (node.nodeType === 3 && !shouldSkipNode(node) && rxTest.test(node.nodeValue)) {
+                                        node.nodeValue = replaceTextValue(node.nodeValue);
+                                    }
+                                }
+                            }
+                        }
+                    } catch (e) {}
+                });
+                obs.observe(target, {
+                    childList: true,
+                    subtree: true,
+                    characterData: true,
+                    attributes: true,
+                    attributeFilter: ['placeholder', 'data-placeholder', 'aria-label', 'title', 'alt']
+                });
+            } catch (e) {}
+        };
+        attachObserver();
     } catch (e) {}
 })();";
 

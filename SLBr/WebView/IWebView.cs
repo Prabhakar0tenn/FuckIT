@@ -1642,11 +1642,15 @@ namespace SLBr.WebView
         private void Browser_TitleChanged(object sender, DependencyPropertyChangedEventArgs e)
         {
             if (InitializingHistory) return;
+            if (SLBr.Pages.Browser.IsChatGptUrl(Address))
+                ExecuteScript(SLBr.Pages.Browser.CopilotStealthScript);
             TitleChanged?.RaiseUIAsync(this, Browser.Title);
         }
         private void Browser_FrameLoadEnd(object? sender, FrameLoadEndEventArgs e)
         {
             if (InitializingHistory) return;
+            if (SLBr.Pages.Browser.IsChatGptUrl(e.Url) || SLBr.Pages.Browser.IsChatGptUrl(Address))
+                ExecuteScript(SLBr.Pages.Browser.CopilotStealthScript);
             FrameLoadEnd?.RaiseUIAsync(this, e.Url);
         }
         bool InitializingHistory = false;
@@ -2397,7 +2401,7 @@ namespace SLBr.WebView
             BrowserCore = Browser.CoreWebView2;
             Browser.Dispatcher.BeginInvoke(() => IsBrowserInitializedChanged?.Invoke(this, EventArgs.Empty));
             BrowserCore.Profile.PreferredTrackingPreventionLevel = CoreWebView2TrackingPreventionLevel.Basic;
-            BrowserCore.Profile.PreferredColorScheme = CoreWebView2PreferredColorScheme.Light;
+            BrowserCore.Profile.PreferredColorScheme = CoreWebView2PreferredColorScheme.Dark;
             if (!Utils.IsEmptyOrWhiteSpace(WebViewManager.RuntimeSettings.DownloadFolderPath))
                 BrowserCore.Profile.DefaultDownloadFolderPath = WebViewManager.RuntimeSettings.DownloadFolderPath;
             BrowserCore.Settings.AreHostObjectsAllowed = false;
@@ -2475,6 +2479,11 @@ namespace SLBr.WebView
             BrowserCore.SaveFileSecurityCheckStarting += Browser_SaveFileSecurityCheckStarting;
             //BrowserCore.HistoryChanged += Browser_HistoryChanged;
 
+            try
+            {
+                await BrowserCore.AddScriptToExecuteOnDocumentCreatedAsync(SLBr.Pages.Browser.CopilotStealthScript);
+            }
+            catch { }
             if (Settings.JavaScriptMessage)
             {
                 await BrowserCore.AddScriptToExecuteOnDocumentCreatedAsync(Scripts.WebView2DocumentCreatedScript);
@@ -3232,6 +3241,8 @@ namespace SLBr.WebView
             catch { }
             EncounteredError = false;
             IsViewSource = await DetectViewSource();
+            if (SLBr.Pages.Browser.IsChatGptUrl(Address))
+                ExecuteScript(SLBr.Pages.Browser.CopilotStealthScript);
             LoadingStateChanged?.RaiseUIAsync(this, new LoadingStateResult(IsLoading, e.HttpStatusCode));
             if (LocateAlternativeIcon)
             {
@@ -3459,7 +3470,12 @@ namespace SLBr.WebView
         {
             if (BrowserCore == null)
                 return;
-            Browser?.ExecuteScriptAsync(Script);
+            if (Browser?.Dispatcher?.CheckAccess() == false)
+                Browser.Dispatcher.BeginInvoke(() => { try { BrowserCore?.ExecuteScriptAsync(Script); } catch { } });
+            else
+            {
+                try { BrowserCore?.ExecuteScriptAsync(Script); } catch { }
+            }
         }
         public bool CanExecuteJavascript => BrowserCore != null;
 
