@@ -1,0 +1,1745 @@
+﻿/*Copyright © SLT Softwares. All rights reserved.
+Use of this source code is governed by a GNU license that can be found in the LICENSE file.*/
+
+using CefSharp;
+using Microsoft.Web.WebView2.Core;
+using Microsoft.Win32;
+using SLBr.Controls;
+using SLBr.Extensions;
+using SLBr.WebView;
+using System.Collections.ObjectModel;
+using System.ComponentModel;
+using System.IO;
+using System.Net.Http;
+using System.Net.Http.Headers;
+using System.Runtime.CompilerServices;
+using System.Security.Cryptography;
+using System.Text;
+using System.Text.Json;
+using System.Windows;
+using System.Windows.Controls;
+using System.Windows.Input;
+using System.Windows.Media;
+using System.Windows.Navigation;
+using System.Windows.Threading;
+
+namespace SLBr.Pages
+{
+    public interface IPageOverlay : IDisposable
+    {
+        void Initialize(Browser _BrowserView);
+        void OnNavigated();
+        void ApplyTheme(Theme _Theme);
+    }
+
+    /// <summary>
+    /// Interaction logic for Settings.xaml
+    /// </summary>
+    public partial class SettingsPage : UserControl, IPageOverlay
+    {
+        public event PropertyChangedEventHandler PropertyChanged = delegate { };
+
+        private void RaisePropertyChanged([CallerMemberName] string Name = null) =>
+            PropertyChanged(this, new PropertyChangedEventArgs(Name));
+
+        private ObservableCollection<ActionStorage> PrivateAddableLanguages = [];
+        public ObservableCollection<ActionStorage> AddableLanguages
+        {
+            get => PrivateAddableLanguages;
+            set
+            {
+                PrivateAddableLanguages = value;
+                RaisePropertyChanged();
+            }
+        }
+
+        public SettingsPage()
+        {
+            InitializeComponent();
+            if (App.Instance.ReadOnlyInstance)
+            {
+                foreach (TabItem Tab in SettingsTabControl.Items)
+                    Tab.Visibility = Visibility.Collapsed;
+                AboutTab.Visibility = Visibility.Visible;
+                SettingsTabControl.SelectedItem = AboutTab;
+            }
+        }
+
+        public void Initialize(Browser _BrowserView)
+        {
+            BrowserView = _BrowserView;
+        }
+
+        protected override void OnMouseRightButtonUp(MouseButtonEventArgs e)
+        {
+            base.OnMouseRightButtonUp(e);
+            if (e.Handled) return;
+            /*if (Utils.FindAncestorOfType<TextBoxBase>(e.OriginalSource as DependencyObject) != null)
+                return;*/
+            /*if (Utils.FindAncestorOfType<TextBlock>(e.OriginalSource as DependencyObject) != null)
+                return;*/
+            var (Ancestor, HasContextMenu) = Utils.FindAncestorContextMenu(e.OriginalSource as DependencyObject);
+            if (HasContextMenu)
+                return;
+            if (Ancestor != null && !HasContextMenu && Ancestor is TextBlock _TextBlock)
+            {
+                string SelectionText = TextBlockSelectionBehaviour.GetSelectedText(_TextBlock);
+                if (!string.IsNullOrEmpty(SelectionText))
+                {
+                    BrowserView.WebView_ContextMenuRequested(Ancestor, new WebContextMenuEventArgs() { MenuType = WebContextMenuType.Selection, FrameUrl = BrowserView.Address, SelectionText = SelectionText });
+                    return;
+                }
+            }
+            BrowserView.WebView_ContextMenuRequested(this, new WebContextMenuEventArgs() { MenuType = WebContextMenuType.Page, FrameUrl = BrowserView.Address });
+        }
+
+        string PreviousUrl = string.Empty;
+        string CurrentUrl = string.Empty;
+        public void OnNavigated()
+        {
+            if (BrowserView != null && BrowserView.Address != PreviousUrl)
+            {
+                PreviousUrl = CurrentUrl;
+                CurrentUrl = BrowserView.Address;
+                if (CurrentUrl != null && CurrentUrl.Length > 16)
+                {
+                    string[] UrlParts = BrowserView.Address[16..].Split("/", StringSplitOptions.RemoveEmptyEntries);
+                    if (UrlParts.Length != 0)
+                    {
+                        string TabName = UrlParts[0];
+                        bool FoundTab = false;
+                        foreach (TabItem Tab in SettingsTabControl.Items)
+                        {
+                            if (Tab.Visibility == Visibility.Visible && Tab.Header != null)
+                            {
+                                string Header = Uri.EscapeDataString(Tab.Header.ToString().ToLowerInvariant().AsSpan());
+                                if (TabName == Header)
+                                {
+                                    SettingsTabControl.SelectedItem = Tab;
+                                    FoundTab = true;
+                                    break;
+                                }
+                            }
+                        }
+                        if (!FoundTab)
+                        {
+                            if (UserTab.Visibility == Visibility.Visible)
+                                SettingsTabControl.SelectedItem = UserTab;
+                            else
+                                SettingsTabControl.SelectedItem = AboutTab;
+                        }
+                        if (UrlParts.Length == 2)
+                        {
+                            if (SettingsTabControl.SelectedItem is TabItem SelectedTabItem && SelectedTabItem.IsEnabled)
+                            {
+                                var Pages = ((SelectedTabItem.Content as ScrollViewer).Content as Grid).Children;
+                                string SubName = UrlParts[1];
+                                Border? Target = null;
+                                foreach (Border Page in Pages)
+                                {
+                                    if (Page.Tag as string == SubName)
+                                    {
+                                        Target = Page;
+                                        Page.Visibility = Visibility.Visible;
+                                    }
+                                    else
+                                        Page.Visibility = Visibility.Collapsed;
+                                }
+                                if (Target == null)
+                                    Pages[0].Visibility = Visibility.Visible;
+                            }
+                        }
+                    }
+                }
+            }
+            foreach (TabItem Tab in SettingsTabControl.Items)
+            {
+                if (Tab.Header != null)
+                    Tab.IsEnabled = true;
+            }
+        }
+
+        public void Dispose()
+        {
+            PrivateAddableLanguages.Clear();
+            GC.SuppressFinalize(this);
+        }
+
+        Browser BrowserView;
+
+        public void RemoveLocale(object sender, RoutedEventArgs e)
+        {
+            try
+            {
+                if (sender is Control _Control && _Control.DataContext is ActionStorage LocaleEntry)
+                {
+                    if (App.Instance.Languages.Count == 1)
+                    {
+                        InformationDialogWindow InfoWindow = new("Error", $"Settings", "The selected language could not be removed.", "\uece4")
+                        {
+                            Topmost = true
+                        };
+                        InfoWindow.ShowDialog();
+                        return;
+                    }
+                    App.Instance.Languages.Remove(LocaleEntry);
+
+                    /*If replace all items in the collection and have more than 10 items.
+                     * There is a significant performance improvement to gain used the Clear() -> Add() method.
+                     * The Add() method is very heavy to use - every add operation refreshes the whole layout of program.
+                     * Instead, use INotifyPropertyChanged pattern and simply replace the collection like this:
+                     * MyObservableCollection = new ObservableCollection<T>(ListOfItems);
+                     * MyObservableCollection needs to invoke the PropertyChanged event (or you can do it manually afterwords)
+                     * Doing this can speed up collection renders significantly.*/
+
+                    int Index = 0;
+                    while (Index < PrivateAddableLanguages.Count && string.Compare(PrivateAddableLanguages[Index].Tooltip, LocaleEntry.Tooltip, StringComparison.Ordinal) < 0)
+                    {
+                        Index++;
+                    }
+                    PrivateAddableLanguages.Insert(Index, LocaleEntry);
+                    RaisePropertyChanged();
+                }
+            }
+            catch { }
+        }
+
+        public void MoveLocale(object sender, RoutedEventArgs e)
+        {
+            try
+            {
+                if (sender is Control _Control && _Control.DataContext is ActionStorage LocaleEntry)
+                {
+                    if (App.Instance.Languages.Count == 1)
+                        return;
+                    bool Up = ((FrameworkElement)sender).Tag.ToString() == "0";
+                    int Index = App.Instance.Languages.IndexOf(LocaleEntry);
+                    if (Up)
+                    {
+                        if (Index > 0)
+                            App.Instance.Languages.Move(Index, Index - 1);
+                    }
+                    else
+                    {
+                        if (Index >= 0 && Index < App.Instance.Languages.Count - 1)
+                            App.Instance.Languages.Move(Index, Index + 1);
+                    }
+                    RaisePropertyChanged();
+                }
+            }
+            catch { }
+        }
+
+        public void AddLocale(object sender, RoutedEventArgs e)
+        {
+            try
+            {
+                if (sender != null)
+                {
+                    ActionStorage _Language = AddableLanguages.First(i => i.Tooltip == ((FrameworkElement)sender).Tag.ToString());
+                    App.Instance.Languages.Add(_Language);
+                    AddableLanguages.Remove(_Language);
+                }
+            }
+            catch { }
+        }
+
+        private void Hyperlink_RequestNavigate(object sender, RequestNavigateEventArgs e)
+        {
+            BrowserView.Tab.ParentWindow.NewTab(e.Uri.ToString(), true, BrowserView.Tab.ParentWindow.TabsUI.SelectedIndex + 1, BrowserView.Private, BrowserView.Tab.TabGroup);
+            e.Handled = true;
+        }
+
+        private void HyperlinkButton_Click(object sender, RoutedEventArgs e)
+        {
+            BrowserView.Tab.ParentWindow.NewTab(((FrameworkElement)sender).Tag.ToString(), true, BrowserView.Tab.ParentWindow.TabsUI.SelectedIndex + 1, BrowserView.Private, BrowserView.Tab.TabGroup);
+        }
+
+        private void LanguageSelection_SelectionChanged(object sender, SelectionChangedEventArgs e)
+        {
+            if (SettingsInitialized)
+            {
+                if (LanguageSelection.SelectedIndex == -1)
+                    LanguageSelection.SelectedIndex = 0;
+                App.Instance.Locale = App.Instance.Languages[LanguageSelection.SelectedIndex];
+                if (WebViewManager.IsCefInitialized)
+                {
+                    Cef.UIThreadTaskFactory.StartNew(delegate
+                    {
+                        IRequestContext GlobalRequestContext = Cef.GetGlobalRequestContext();
+
+                        IEnumerable<string> LocaleStrings = App.Instance.Languages.Select(i => i.Tooltip);
+                        GlobalRequestContext.SetPreference("spellcheck.dictionaries", LocaleStrings, out _);
+                        GlobalRequestContext.SetPreference("intl.accept_languages", LocaleStrings, out _);
+                    });
+                }
+            }
+        }
+
+        bool SettingsInitialized = false;
+
+        List<string> _Fonts;
+
+        public void UpdateButton_Click(object sender, RoutedEventArgs e)
+        {
+            App.Instance.ShowUpdateInfoBar();
+        }
+
+        public async void CheckUpdateButton_Click(object sender, RoutedEventArgs e)
+        {
+            if (sender != null)
+            {
+                CheckUpdateButton.IsEnabled = false;
+                await App.Instance.CheckUpdate();
+                CheckUpdateButton.IsEnabled = true;
+            }
+            if (!string.IsNullOrEmpty(App.Instance.UpdateAvailable))
+            {
+                CheckUpdateButton.Visibility = Visibility.Collapsed;
+                UpdateStatusDescription.Text = $"Version {App.Instance.UpdateAvailable}";
+                if (App.Instance.UpdateAvailable == App.Instance.ReleaseVersion)
+                {
+                    UpdateStatusColor.Foreground = App.Instance.GreenColor;
+                    UpdateStatusText.Text = "SLBr is up to date";
+                }
+                else
+                {
+                    UpdateStatusColor.Foreground = App.Instance.OrangeColor;
+                    UpdateStatusText.Text = "An update for SLBr is available";
+                    UpdateStatusButton.Visibility = Visibility.Visible;
+                }
+            }
+            else
+            {
+                UpdateStatusColor.Foreground = (SolidColorBrush)FindResource("IndicatorBrush");
+                UpdateStatusText.Text = "SLBr update check was skipped";
+                CheckUpdateButton.Visibility = Visibility.Visible;
+                UpdateStatusDescription.Text = $"Version {App.Instance.ReleaseVersion}";
+            }
+        }
+
+        private void Page_Loaded(object sender, RoutedEventArgs e)
+        {
+            SettingsInitialized = false;
+            CheckUpdateButton_Click(null, null);
+            SyncWarning.Visibility = Visibility.Collapsed;
+            SyncCheckBox.IsChecked = bool.Parse(App.Instance.GlobalSave.Get("Sync"));
+            if (SyncCheckBox.IsChecked.GetValueOrDefault() && !App.Instance.Synchronized)
+            {
+                SyncWarningText.Text = string.IsNullOrEmpty(App.Instance.GlobalSave.Get("SyncGitHub")) ? "No access token found." : "Data is not synchorized.";
+                SyncWarning.Visibility = Visibility.Visible;
+            }
+            string[] SyncedData = App.Instance.GlobalSave.Get("SyncData").Split(',');
+            SyncFavouritesToggleButton.IsChecked = SyncedData.Contains("Favourites");
+            //SyncTabsToggleButton.IsChecked = SyncedData.Contains("Tabs");
+            SyncSettingsToggleButton.IsChecked = SyncedData.Contains("Settings");
+            if (AddableLanguages.Count == 0)
+            {
+                IEnumerable<string> ISOs = App.Instance.Languages.Select(i => i.Tooltip);
+                foreach (KeyValuePair<string, string> Locale in App.Instance.AllLocales)
+                {
+                    if (!ISOs.Contains(Locale.Key))
+                        AddableLanguages.Add(new ActionStorage(Locale.Value, App.GetLocaleIcon(Locale.Key), Locale.Key));
+                }
+                AddableLanguages = new(AddableLanguages.OrderBy(x => x.Tooltip));
+            }
+            AdBlockLists.ItemsSource = App.Instance.AdBlockLists;
+
+            LanguageSelection.SelectionChanged -= LanguageSelection_SelectionChanged;
+            LanguageSelection.ItemsSource = App.Instance.Languages;
+            LanguageSelection.SelectedValue = App.Instance.Locale;
+            LanguageSelection.SelectionChanged += LanguageSelection_SelectionChanged;
+            AddLanguageListMenu.ItemsSource = AddableLanguages;
+
+            SearchEngineComboBox.ItemsSource = App.Instance.SearchEngines;
+            SearchEngineComboBox.SelectedValue = App.Instance.DefaultSearchProvider;
+
+            HomepageTextBox.Text = App.Instance.GlobalSave.Get("Homepage");
+
+            DownloadPathText.Text = WebViewManager.RuntimeSettings.DownloadFolderPath;
+            ScreenshotPathText.Text = App.Instance.GlobalSave.Get("ScreenshotPath");
+
+            PrivateTabsCheckBox.IsChecked = bool.Parse(App.Instance.GlobalSave.Get("PrivateTabs"));
+            RestoreTabsCheckBox.IsChecked = bool.Parse(App.Instance.GlobalSave.Get("RestoreTabs"));
+            TabPreviewCheckBox.IsChecked = bool.Parse(App.Instance.GlobalSave.Get("TabPreview"));
+            TabMemoryCheckBox.IsChecked = bool.Parse(App.Instance.GlobalSave.Get("TabMemory"));
+            DownloadFaviconsCheckBox.IsChecked = bool.Parse(App.Instance.GlobalSave.Get("Favicons"));
+            FaviconServiceComboBox.SelectedIndex = App.Instance.GlobalSave.GetInt("FaviconService");
+
+            CheckUpdateCheckBox.IsChecked = bool.Parse(App.Instance.GlobalSave.Get("CheckUpdate"));
+            SmoothScrollCheckBox.IsChecked = bool.Parse(App.Instance.GlobalSave.Get("SmoothScroll"));
+            QuickImageCheckBox.IsChecked = bool.Parse(App.Instance.GlobalSave.Get("QuickImage"));
+            //SuppressErrorCheckBox.IsChecked = bool.Parse(App.Instance.GlobalSave.Get("SuppressError"));
+            SpellCheckCheckBox.IsChecked = WebViewManager.RuntimeSettings.SpellCheck;
+            DownloadPromptCheckBox.IsChecked = WebViewManager.RuntimeSettings.DownloadPrompt;
+            ExternalFontsCheckBox.IsChecked = App.Instance.ExternalFonts;
+            TabUnloadingCheckBox.IsChecked = bool.Parse(App.Instance.GlobalSave.Get("TabUnloading"));
+
+            AdaptiveThemeCheckBox.IsChecked = bool.Parse(App.Instance.GlobalSave.Get("AdaptiveTheme"));
+            ToastCheckBox.IsChecked = bool.Parse(App.Instance.GlobalSave.Get("Toast"));
+            WarnCodecCheckBox.IsChecked = bool.Parse(App.Instance.GlobalSave.Get("WarnCodec"));
+            WaybackInfoBarCheckBox.IsChecked = bool.Parse(App.Instance.GlobalSave.Get("WaybackInfoBar"));
+            HomographInfoBarCheckBox.IsChecked = bool.Parse(App.Instance.GlobalSave.Get("HomographInfoBar"));
+
+            NeverSlowModeCheckBox.IsChecked = App.Instance.NeverSlowMode;
+            AMPCheckBox.IsChecked = bool.Parse(App.Instance.GlobalSave.Get("AMP"));
+
+            AdBlockComboBox.SelectedIndex = App.Instance.GlobalSave.GetInt("AdBlock");
+            WebRiskServiceComboBox.SelectedIndex = App.Instance.GlobalSave.GetInt("WebRiskService");
+            SmartScreenSubText.Visibility = WebRiskServiceComboBox.SelectedIndex == 0 ? Visibility.Collapsed : Visibility.Visible;
+            SafeBrowsingAdvisory.Visibility = WebRiskServiceComboBox.SelectedIndex == 1 ? Visibility.Visible : Visibility.Collapsed;
+            DownloadSecurityServiceComboBox.SelectedIndex = App.Instance.GlobalSave.GetInt("DownloadSecurityService");
+
+            TrimURLCheckBox.IsChecked = bool.Parse(App.Instance.GlobalSave.Get("TrimURL"));
+            PunycodeURLCheckBox.IsChecked = bool.Parse(App.Instance.GlobalSave.Get("PunycodeURL"));
+            ModernURLCheckBox.IsChecked = bool.Parse(App.Instance.GlobalSave.Get("ModernURL"));
+            HomographProtectionCheckBox.IsChecked = bool.Parse(App.Instance.GlobalSave.Get("HomographProtection"));
+
+            SmartDarkModeCheckBox.IsChecked = bool.Parse(App.Instance.GlobalSave.Get("SmartDarkMode"));
+
+            MobileViewCheckBox.IsChecked = bool.Parse(App.Instance.GlobalSave.Get("MobileView"));
+            
+            AntiTamperCheckBox.IsChecked = bool.Parse(App.Instance.GlobalSave.Get("AntiTamper"));
+            AntiFullscreenCheckBox.IsChecked = bool.Parse(App.Instance.GlobalSave.Get("AntiFullscreen"));
+            AntiInspectDetectCheckBox.IsChecked = bool.Parse(App.Instance.GlobalSave.Get("AntiInspectDetect"));
+            BypassSiteMenuCheckBox.IsChecked = bool.Parse(App.Instance.GlobalSave.Get("BypassSiteMenu"));
+            TextSelectionCheckBox.IsChecked = bool.Parse(App.Instance.GlobalSave.Get("TextSelection"));
+            RemoveFilterCheckBox.IsChecked = bool.Parse(App.Instance.GlobalSave.Get("RemoveFilter"));
+            RemoveOverlayCheckBox.IsChecked = bool.Parse(App.Instance.GlobalSave.Get("RemoveOverlay"));
+
+            //SendDiagnosticsCheckBox.IsChecked = bool.Parse(App.Instance.GlobalSave.Get("SendDiagnostics"));
+            WebNotificationsCheckBox.IsChecked = bool.Parse(App.Instance.GlobalSave.Get("WebNotifications"));
+            WebAppsCheckBox.IsChecked = bool.Parse(App.Instance.GlobalSave.Get("WebApps"));
+
+            DimIconsWhenUnloadedCheckBox.IsChecked = App.Instance.DimUnloadedIcon;
+            ShowUnloadedIconCheckBox.IsChecked = bool.Parse(App.Instance.GlobalSave.Get("ShowUnloadedIcon"));
+            ShowUnloadTimeLeftCheckBox.IsChecked = bool.Parse(App.Instance.GlobalSave.Get("ShowUnloadProgress"));
+
+            TabAlignmentComboBox.SelectedIndex = App.Instance.GlobalSave.GetInt("TabAlignment");
+
+            NetworkLimitCheckBox.IsChecked = bool.Parse(App.Instance.GlobalSave.Get("NetworkLimit"));
+            OfferTranslateCheckBox.IsChecked = bool.Parse(App.Instance.GlobalSave.Get("OfferTranslate"));
+
+            SearchSuggestionsCheckBox.IsChecked = App.Instance.SearchSuggestions;
+            SmartSuggestionsCheckBox.IsChecked = App.Instance.SmartSuggestions;
+            RichSuggestionsCheckBox.IsChecked = App.Instance.RichSuggestions;
+            OpenSearchCheckBox.IsChecked = bool.Parse(App.Instance.GlobalSave.Get("OpenSearch"));
+
+            FullscreenPopupCheckBox.IsChecked = bool.Parse(App.Instance.GlobalSave.Get("FullscreenPopup"));
+
+            BrowserHardwareAccelerationCheckBox.IsChecked = bool.Parse(App.Instance.GlobalSave.Get("BrowserHardwareAcceleration"));
+            JITCheckBox.IsChecked = bool.Parse(App.Instance.GlobalSave.Get("JIT"));
+            StartupBoostCheckBox.IsChecked = bool.Parse(App.Instance.GlobalSave.Get("StartupBoost"));
+            PDFViewerToggleButton.IsChecked = WebViewManager.RuntimeSettings.PDFViewer;
+
+            PerformanceComboBox.SelectedIndex = App.Instance.GlobalSave.GetInt("Performance");
+            ReduceDiskCheckBox.IsChecked = bool.Parse(App.Instance.GlobalSave.Get("ReduceDisk"));
+            ReduceDiskCheckBox.IsEnabled = PerformanceComboBox.SelectedIndex == 0;
+
+            RenderModeComboBox.SelectedIndex = App.Instance.GlobalSave.GetInt("RenderMode");
+            ImageSearchComboBox.SelectedIndex = App.Instance.GlobalSave.GetInt("ImageSearch");
+            TranslationProviderComboBox.SelectedIndex = App.Instance.GlobalSave.GetInt("TranslationProvider");
+            SpellCheckProviderComboBox.SelectedIndex = App.Instance.GlobalSave.GetInt("SpellCheckProvider");
+            WebEngineComboBox.SelectedIndex = App.Instance.GlobalSave.GetInt("WebEngine");
+            TridentVersionComboBox.SelectedIndex = App.Instance.GlobalSave.GetInt("TridentVersion");
+
+            TabUnloadingTimeComboBox.SelectionChanged -= TabUnloadingTimeComboBox_SelectionChanged;
+            if (TabUnloadingTimeComboBox.Items.Count == 0)
+            {
+                TabUnloadingTimeComboBox.Items.Add("1");
+                TabUnloadingTimeComboBox.Items.Add("3");
+                TabUnloadingTimeComboBox.Items.Add("5");
+                TabUnloadingTimeComboBox.Items.Add("10");
+                TabUnloadingTimeComboBox.Items.Add("15");
+                TabUnloadingTimeComboBox.Items.Add("30");
+                TabUnloadingTimeComboBox.Items.Add("45");
+                TabUnloadingTimeComboBox.Items.Add("60");
+                TabUnloadingTimeComboBox.Items.Add("120");
+            }
+            TabUnloadingTimeComboBox.SelectedValue = App.Instance.GlobalSave.Get("TabUnloadingTime");
+            TabUnloadingTimeComboBox.SelectionChanged += TabUnloadingTimeComboBox_SelectionChanged;
+
+            int RuntimeStyle = App.Instance.GlobalSave.GetInt("ChromiumRuntimeStyle");
+            RuntimeStyleComboBox.SelectedIndex = RuntimeStyle;
+            if (RuntimeStyle != 0)
+                ExtensionWarning.Visibility = Visibility.Visible;
+
+            float Bandwidth = float.Parse(App.Instance.GlobalSave.Get("Bandwidth"));
+            if (Bandwidth >= 1)
+            {
+                BandwidthTextBox.Text = Bandwidth.ToString("0.##");
+                BandwidthUnitComboBox.SelectedIndex = 0;
+            }
+            else
+            {
+                BandwidthTextBox.Text = (Bandwidth * 1000).ToString("0.##");
+                BandwidthUnitComboBox.SelectedIndex = 1;
+            }
+
+            ScreenshotFormatComboBox.SelectedIndex = App.Instance.GlobalSave.GetInt("ScreenshotFormat");
+
+            Theme _Theme = App.Instance.GetTheme("Custom");
+            CustomThemeIcon.Foreground = new SolidColorBrush(_Theme.PrimaryColor);
+            CustomThemeSelection.Background = new SolidColorBrush(_Theme.SecondaryColor);
+            string ThemeName = App.Instance.GlobalSave.Get("Theme");
+            foreach (Border ThemeItems in ThemeSelection.Items)
+            {
+                if ((string)ThemeItems.Tag == ThemeName)
+                {
+                    ThemeSelection.SelectedItem = ThemeItems;
+                    break;
+                }
+            }
+
+            AboutVersion.Text = $"Version {App.Instance.ReleaseVersion}";
+            ChromiumVersion.Text = $"Chromium: {Cef.ChromiumVersion}";
+            CEFVersion.Text = $"CEF: {(Cef.CefVersion.StartsWith('r') ? Cef.CefVersion.Substring(1, Cef.CefVersion.IndexOf('-') - 10) : Cef.CefVersion.Substring(0, Cef.CefVersion.IndexOf('-') - 10))}";
+            try { WebView2Version.Text = $"WebView2: {CoreWebView2Environment.GetAvailableBrowserVersionString()}"; }
+            catch (WebView2RuntimeNotFoundException) { WebView2Version.Text = $"WebView2: Unavailable"; }
+            switch (WebViewManager.Settings.TridentVersion)
+            {
+                case TridentEmulationVersion.IE7:
+                    TridentVersion.Text = $"Trident (Internet Explorer): 7";
+                    break;
+                case TridentEmulationVersion.IE8:
+                    TridentVersion.Text = $"Trident (Internet Explorer): 8";
+                    break;
+                case TridentEmulationVersion.IE9:
+                    TridentVersion.Text = $"Trident (Internet Explorer): 9";
+                    break;
+                case TridentEmulationVersion.IE10:
+                    TridentVersion.Text = $"Trident (Internet Explorer): 10";
+                    break;
+                case TridentEmulationVersion.IE11:
+                    TridentVersion.Text = $"Trident (Internet Explorer): 11";
+                    break;
+                case TridentEmulationVersion.Edge:
+                    TridentVersion.Text = $"Trident (Internet Explorer): Edge";
+                    break;
+            }
+
+            HomeButtonToggleButton.IsChecked = App.Instance.AllowHomeButton;
+            TranslateButtonToggleButton.IsChecked = App.Instance.AllowTranslateButton;
+            ReaderButtonToggleButton.IsChecked = App.Instance.AllowReaderModeButton;
+            QRButtonToggleButton.IsChecked = App.Instance.AllowQRButton;
+            WebEngineButtonToggleButton.IsChecked = App.Instance.AllowWebEngineButton;
+
+            ExtensionButtonComboBox.SelectedIndex = App.Instance.ShowExtensionButton;
+            DownloadsButtonComboBox.SelectedIndex = App.Instance.ShowDownloadsButton;
+            BlockScreenCaptureComboBox.SelectedIndex = App.Instance.BlockScreenCapture;
+
+            FavouritesBarComboBox.SelectedIndex = App.Instance.ShowFavouritesBar;
+
+            if (StandardFontComboBox.Items.Count == 0)
+            {
+                _Fonts = Fonts.SystemFontFamilies.Select(i => i.Source).ToList();
+                StandardFontComboBox.ItemsSource = _Fonts;
+                SerifFontComboBox.ItemsSource = new List<string>(_Fonts);
+                SansSerifFontComboBox.ItemsSource = new List<string>(_Fonts);
+                FixedFontComboBox.ItemsSource = new List<string>(_Fonts);
+                MathFontComboBox.ItemsSource = new List<string>(_Fonts);
+            }
+            if (WebViewManager.IsCefInitialized)
+            {
+                //TODO: APPLY FOR WEBVIEW2 & TRIDENT
+                Cef.UIThreadTaskFactory.StartNew(delegate
+                {
+                    var Preferences = Cef.GetGlobalRequestContext().GetAllPreferences(true);
+                    Dispatcher.Invoke(() =>
+                    {
+                        if (Preferences.TryGetValue("webkit", out var WebKitObject) && WebKitObject is IDictionary<string, object> WebKit)
+                        {
+                            if (WebKit.TryGetValue("webprefs", out var WebPrefsObject) && WebPrefsObject is IDictionary<string, object> WebPrefs)
+                            {
+                                if (WebPrefs.TryGetValue("fonts", out var FontsObject) && FontsObject is IDictionary<string, object> Fonts)
+                                {
+                                    if (Fonts.TryGetValue("standard", out var StandardFontMap) && StandardFontMap is IDictionary<string, object> StandardScriptMap)
+                                    {
+                                        if (StandardScriptMap.TryGetValue("Zyyy", out var StandardFont))
+                                        {
+                                            StandardFontComboBox.SelectedItem = StandardFont;
+                                            StandardFontComboBox.IsEnabled = true;
+                                        }
+                                    }
+                                    if (Fonts.TryGetValue("serif", out var SerifFontMap) && SerifFontMap is IDictionary<string, object> SerifScriptMap)
+                                    {
+                                        if (SerifScriptMap.TryGetValue("Zyyy", out var SerifFont))
+                                        {
+                                            SerifFontComboBox.SelectedItem = SerifFont;
+                                            SerifFontComboBox.IsEnabled = true;
+                                        }
+                                    }
+                                    if (Fonts.TryGetValue("sansserif", out var SansSerifFontMap) && SansSerifFontMap is IDictionary<string, object> SansSerifScriptMap)
+                                    {
+                                        if (SansSerifScriptMap.TryGetValue("Zyyy", out var SansSerifFont))
+                                        {
+                                            SansSerifFontComboBox.SelectedItem = SansSerifFont;
+                                            SansSerifFontComboBox.IsEnabled = true;
+                                        }
+                                    }
+                                    if (Fonts.TryGetValue("fixed", out var FixedFontMap) && FixedFontMap is IDictionary<string, object> FixedScriptMap)
+                                    {
+                                        if (FixedScriptMap.TryGetValue("Zyyy", out var FixedFont))
+                                        {
+                                            FixedFontComboBox.SelectedItem = FixedFont;
+                                            FixedFontComboBox.IsEnabled = true;
+                                        }
+                                    }
+                                    if (Fonts.TryGetValue("math", out var MathFontMap) && MathFontMap is IDictionary<string, object> MathScriptMap)
+                                    {
+                                        if (MathScriptMap.TryGetValue("Zyyy", out var MathFont))
+                                        {
+                                            MathFontComboBox.SelectedItem = MathFont;
+                                            MathFontComboBox.IsEnabled = true;
+                                        }
+                                    }
+                                }
+                                if (WebPrefs.TryGetValue("default_font_size", out var FontSize))
+                                {
+                                    FontSizeSlider.Value = (int)FontSize;
+                                    FontSizeSlider.IsEnabled = true;
+                                }
+                                if (WebPrefs.TryGetValue("minimum_font_size", out var MinimumFontSize))
+                                {
+                                    MinimumFontSizeSlider.Value = (int)MinimumFontSize;
+                                    MinimumFontSizeSlider.IsEnabled = true;
+                                }
+                            }
+                        }
+                    });
+                });
+            }
+
+            ExtensionsList.ItemsSource = App.Instance.ExtensionManager.GetExtensions(BrowserView?.WebView?.Engine ?? (WebEngineType)App.Instance.GlobalSave.GetInt("WebEngine"));
+
+            UsernameInitial.Text = App.Instance.CurrentProfile.Initial;
+            UsernameInitial.Foreground = App.Instance.CurrentProfile.Foreground;
+            UsernameBackground.Background = App.Instance.CurrentProfile.Brush;
+            UsernameText.Text = App.Instance.CurrentProfile.Name;
+
+            ApplyTheme(App.Instance.CurrentTheme);
+            SettingsInitialized = true;
+        }
+
+        public void ApplyTheme(Theme _Theme)
+        {
+            Resources["PrimaryBrushColor"] = _Theme.PrimaryColor;
+            Resources["SecondaryBrushColor"] = _Theme.SecondaryColor;
+            Resources["BorderBrushColor"] = _Theme.BorderColor;
+            Resources["GrayBrushColor"] = _Theme.GrayColor;
+            Resources["FontBrushColor"] = _Theme.FontColor;
+            Resources["IndicatorBrushColor"] = _Theme.IndicatorColor;
+        }
+
+        private void RuntimeStyleComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
+        {
+            if (SettingsInitialized)
+                App.Instance.GlobalSave.Set("ChromiumRuntimeStyle", RuntimeStyleComboBox.SelectedIndex);
+        }
+        private void ScreenshotFormatComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
+        {
+            if (SettingsInitialized)
+                App.Instance.GlobalSave.Set("ScreenshotFormat", ScreenshotFormatComboBox.SelectedIndex);
+        }
+        private void TabUnloadingTimeComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
+        {
+            if (SettingsInitialized)
+                App.Instance.UpdateTabUnloadingTimer(int.Parse(TabUnloadingTimeComboBox.SelectedValue.ToString()));
+        }
+        private void RenderModeComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
+        {
+            if (SettingsInitialized)
+                App.Instance.SetRenderMode(RenderModeComboBox.SelectedIndex);
+        }
+        private void ImageSearchComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
+        {
+            if (SettingsInitialized)
+                App.Instance.GlobalSave.Set("ImageSearch", ImageSearchComboBox.SelectedIndex);
+        }
+        private void TranslationProviderComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
+        {
+            if (SettingsInitialized)
+            {
+                App.Instance.GlobalSave.Set("TranslationProvider", TranslationProviderComboBox.SelectedIndex);
+                switch (TranslationProviderComboBox.SelectedIndex)
+                {
+                    case 0:
+                        foreach (MainWindow _Window in App.Instance.AllWindows)
+                        {
+                            foreach (Browser BrowserView in _Window.Tabs.Select(i => i.Content).Where(i => i != null))
+                            {
+                                BrowserView.TranslateAttribution.Inlines.Clear();
+                                BrowserView.TranslateAttribution.Inlines.Add("Google Translate");
+                                BrowserView.TranslateAttribution.NavigateUri = new Uri("https://translate.google.com/");
+                            }
+                        }
+                        break;
+                    case 1:
+                        foreach (MainWindow _Window in App.Instance.AllWindows)
+                        {
+                            foreach (Browser BrowserView in _Window.Tabs.Select(i => i.Content).Where(i => i != null))
+                            {
+                                BrowserView.TranslateAttribution.Inlines.Clear();
+                                BrowserView.TranslateAttribution.Inlines.Add("Microsoft Translate");
+                                BrowserView.TranslateAttribution.NavigateUri = new Uri("https://learn.microsoft.com/en-us/azure/ai-services/translator/");
+                            }
+                        }
+                        break;
+                    case 2:
+                        foreach (MainWindow _Window in App.Instance.AllWindows)
+                        {
+                            foreach (Browser BrowserView in _Window.Tabs.Select(i => i.Content).Where(i => i != null))
+                            {
+                                BrowserView.TranslateAttribution.Inlines.Clear();
+                                BrowserView.TranslateAttribution.Inlines.Add("Yandex Translate");
+                                BrowserView.TranslateAttribution.NavigateUri = new Uri("https://yandex.cloud/en/services/translate");
+                            }
+                        }
+                        break;
+                    case 3:
+                        foreach (MainWindow _Window in App.Instance.AllWindows)
+                        {
+                            foreach (Browser BrowserView in _Window.Tabs.Select(i => i.Content).Where(i => i != null && i.WebView != null && i.WebView.IsBrowserInitialized))
+                            {
+                                BrowserView.TranslateAttribution.Inlines.Clear();
+                                BrowserView.TranslateAttribution.Inlines.Add("Lingvanex");
+                                BrowserView.TranslateAttribution.NavigateUri = new Uri("https://lingvanex.com/products/translationapi/");
+                            }
+                        }
+                        break;
+                }
+            }
+        }
+        private void SpellCheckProviderComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
+        {
+            switch (SpellCheckProviderComboBox.SelectedIndex)
+            {
+                case 1:
+                    SpellcheckAttribution.Inlines.Clear();
+                    SpellcheckAttribution.Inlines.Add("Google");
+                    SpellcheckAttribution.NavigateUri = new Uri("https://google.com/");
+                    break;
+                case 2:
+                    SpellcheckAttribution.Inlines.Clear();
+                    SpellcheckAttribution.Inlines.Add("Microsoft");
+                    SpellcheckAttribution.NavigateUri = new Uri("https://microsoft.com/");
+                    break;
+                case 3:
+                    SpellcheckAttribution.Inlines.Clear();
+                    SpellcheckAttribution.Inlines.Add("LanguageTool");
+                    SpellcheckAttribution.NavigateUri = new Uri("https://languagetool.org/");
+                    break;
+                case 4:
+                    SpellcheckAttribution.Inlines.Clear();
+                    SpellcheckAttribution.Inlines.Add("Yandex Speller");
+                    SpellcheckAttribution.NavigateUri = new Uri("https://yandex.ru/dev/speller/");
+                    break;
+            }
+            if (SettingsInitialized)
+                App.Instance.GlobalSave.Set("SpellCheckProvider", SpellCheckProviderComboBox.SelectedIndex);
+        }
+        private void WebEngineComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
+        {
+            if (SettingsInitialized)
+            {
+                if (WebEngineComboBox.SelectedIndex == 1)
+                {
+                    string? AvailableVersion = null;
+                    try
+                    {
+                        AvailableVersion = CoreWebView2Environment.GetAvailableBrowserVersionString();
+                    }
+                    catch (WebView2RuntimeNotFoundException)
+                    {
+                        WebEngineComboBox.SelectedIndex = 0;
+                        InformationDialogWindow InfoWindow = new InformationDialogWindow("Error", "WebView2 Runtime Unavailable", "Microsoft Edge WebView2 Runtime is not installed on your device.", "\ue7f9", "Download", "Cancel")
+                        {
+                            Topmost = true
+                        };
+                        if (InfoWindow.ShowDialog() == true)
+                            BrowserView.Tab.ParentWindow.NewTab("https://developer.microsoft.com/en-us/microsoft-edge/webview2/consumer/", true, BrowserView.Tab.ParentWindow.TabsUI.SelectedIndex + 1);
+                    }
+                }
+                App.Instance.GlobalSave.Set("WebEngine", WebEngineComboBox.SelectedIndex);
+            }
+        }
+        private void TridentVersionComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
+        {
+            if (SettingsInitialized)
+                App.Instance.GlobalSave.Set("TridentVersion", TridentVersionComboBox.SelectedIndex);
+        }
+        private void SearchEngineComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
+        {
+            if (SettingsInitialized)
+            {
+                App.Instance.DefaultSearchProvider = SearchEngineComboBox.SelectedValue as SearchProvider;
+                App.Instance.GlobalSave.Set("SearchEngine", App.Instance.DefaultSearchProvider.Name);
+            }
+        }
+        private void FaviconServiceComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
+        {
+            if (SettingsInitialized)
+                App.Instance.GlobalSave.Set("FaviconService", FaviconServiceComboBox.SelectedIndex);
+        }
+        private void AdBlockComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
+        {
+            if (SettingsInitialized)
+                App.Instance.SetAdBlock(AdBlockComboBox.SelectedIndex);
+        }
+        private void WebRiskServiceComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
+        {
+            if (SettingsInitialized)
+            {
+                App.Instance.SetWebRiskService(WebRiskServiceComboBox.SelectedIndex);
+                SmartScreenSubText.Visibility = WebRiskServiceComboBox.SelectedIndex == 0 ? Visibility.Collapsed : Visibility.Visible;
+                SafeBrowsingAdvisory.Visibility = WebRiskServiceComboBox.SelectedIndex == 1 ? Visibility.Visible : Visibility.Collapsed;
+            }
+        }
+        private void DownloadSecurityServiceComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
+        {
+            if (SettingsInitialized)
+                App.Instance.SetDownloadSecurityService(DownloadSecurityServiceComboBox.SelectedIndex);
+        }
+        private void TabAlignmentComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
+        {
+            if (SettingsInitialized)
+                App.Instance.SetAppearance(App.Instance.CurrentTheme, TabAlignmentComboBox.SelectedIndex, App.Instance.VerticalTabWidth, HomeButtonToggleButton.IsChecked.GetValueOrDefault(), TranslateButtonToggleButton.IsChecked.GetValueOrDefault(), ReaderButtonToggleButton.IsChecked.GetValueOrDefault(), ExtensionButtonComboBox.SelectedIndex, DownloadsButtonComboBox.SelectedIndex, FavouritesBarComboBox.SelectedIndex, QRButtonToggleButton.IsChecked.GetValueOrDefault(), WebEngineButtonToggleButton.IsChecked.GetValueOrDefault());
+        }
+        private void ExtensionButtonComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
+        {
+            if (SettingsInitialized)
+                App.Instance.SetAppearance(App.Instance.CurrentTheme, TabAlignmentComboBox.SelectedIndex, App.Instance.VerticalTabWidth, HomeButtonToggleButton.IsChecked.GetValueOrDefault(), TranslateButtonToggleButton.IsChecked.GetValueOrDefault(), ReaderButtonToggleButton.IsChecked.GetValueOrDefault(), ExtensionButtonComboBox.SelectedIndex, DownloadsButtonComboBox.SelectedIndex, FavouritesBarComboBox.SelectedIndex, QRButtonToggleButton.IsChecked.GetValueOrDefault(), WebEngineButtonToggleButton.IsChecked.GetValueOrDefault());
+        }
+        private void DownloadsButtonComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
+        {
+            if (SettingsInitialized)
+                App.Instance.SetAppearance(App.Instance.CurrentTheme, TabAlignmentComboBox.SelectedIndex, App.Instance.VerticalTabWidth, HomeButtonToggleButton.IsChecked.GetValueOrDefault(), TranslateButtonToggleButton.IsChecked.GetValueOrDefault(), ReaderButtonToggleButton.IsChecked.GetValueOrDefault(), ExtensionButtonComboBox.SelectedIndex, DownloadsButtonComboBox.SelectedIndex, FavouritesBarComboBox.SelectedIndex, QRButtonToggleButton.IsChecked.GetValueOrDefault(), WebEngineButtonToggleButton.IsChecked.GetValueOrDefault());
+        }
+        private void FavouritesBarComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
+        {
+            if (SettingsInitialized)
+                App.Instance.SetAppearance(App.Instance.CurrentTheme, TabAlignmentComboBox.SelectedIndex, App.Instance.VerticalTabWidth, HomeButtonToggleButton.IsChecked.GetValueOrDefault(), TranslateButtonToggleButton.IsChecked.GetValueOrDefault(), ReaderButtonToggleButton.IsChecked.GetValueOrDefault(), ExtensionButtonComboBox.SelectedIndex, DownloadsButtonComboBox.SelectedIndex, FavouritesBarComboBox.SelectedIndex, QRButtonToggleButton.IsChecked.GetValueOrDefault(), WebEngineButtonToggleButton.IsChecked.GetValueOrDefault());
+        }
+        private void BlockScreenCaptureComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
+        {
+            if (SettingsInitialized)
+                App.Instance.SetBlockScreenCapture(BlockScreenCaptureComboBox.SelectedIndex);
+        }
+        private void HomepageTextBox_KeyUp(object sender, KeyEventArgs e)
+        {
+            if (e.Key == Key.Enter && HomepageTextBox.Text.Trim().Length > 0)
+            {
+                HomepageTextBox.Text = Utils.FixUrl(HomepageTextBox.Text);
+                App.Instance.GlobalSave.Set("Homepage", HomepageTextBox.Text);
+            }
+        }
+        private void NeverSlowModeCheckBox_Click(object sender, RoutedEventArgs e)
+        {
+            if (SettingsInitialized)
+                App.Instance.SetNeverSlowMode(NeverSlowModeCheckBox.IsChecked.GetValueOrDefault());
+        }
+        private void AMPCheckBox_Click(object sender, RoutedEventArgs e)
+        {
+            if (SettingsInitialized)
+                App.Instance.SetAMP(AMPCheckBox.IsChecked.GetValueOrDefault());
+        }
+        private void TrimURLCheckBox_Click(object sender, RoutedEventArgs e)
+        {
+            if (SettingsInitialized)
+                App.Instance.SetTrimURL(TrimURLCheckBox.IsChecked.GetValueOrDefault());
+        }
+        private void PunycodeURLCheckBox_Click(object sender, RoutedEventArgs e)
+        {
+            if (SettingsInitialized)
+                App.Instance.SetPunycodeURL(PunycodeURLCheckBox.IsChecked.GetValueOrDefault());
+        }
+        private void ModernURLCheckBox_Click(object sender, RoutedEventArgs e)
+        {
+            if (SettingsInitialized)
+                App.Instance.SetModernURL(ModernURLCheckBox.IsChecked.GetValueOrDefault());
+        }
+        private void HomographProtectionCheckBox_Click(object sender, RoutedEventArgs e)
+        {
+            if (SettingsInitialized)
+                App.Instance.SetHomographProtection(HomographProtectionCheckBox.IsChecked.GetValueOrDefault());
+        }
+        private void SmartDarkModeCheckBox_Click(object sender, RoutedEventArgs e)
+        {
+            if (SettingsInitialized)
+                App.Instance.SetSmartDarkMode(SmartDarkModeCheckBox.IsChecked.GetValueOrDefault());
+        }
+        private void TabPreviewCheckBox_Click(object sender, RoutedEventArgs e)
+        {
+            if (SettingsInitialized)
+                App.Instance.SetTabPreview(TabPreviewCheckBox.IsChecked.GetValueOrDefault());
+        }
+        private void TabMemoryCheckBox_Click(object sender, RoutedEventArgs e)
+        {
+            if (SettingsInitialized)
+                App.Instance.SetTabMemory(TabMemoryCheckBox.IsChecked.GetValueOrDefault());
+        }
+        private void AdaptiveThemeCheckBox_Click(object sender, RoutedEventArgs e)
+        {
+            if (SettingsInitialized)
+                App.Instance.GlobalSave.Set("AdaptiveTheme", AdaptiveThemeCheckBox.IsChecked.GetValueOrDefault().ToString());
+        }
+        private void ToastCheckBox_Click(object sender, RoutedEventArgs e)
+        {
+            if (SettingsInitialized)
+                App.Instance.GlobalSave.Set("Toast", ToastCheckBox.IsChecked.GetValueOrDefault().ToString());
+        }
+        private void WarnCodecCheckBox_Click(object sender, RoutedEventArgs e)
+        {
+            if (SettingsInitialized)
+                App.Instance.GlobalSave.Set("WarnCodec", WarnCodecCheckBox.IsChecked.GetValueOrDefault().ToString());
+        }
+        private void WaybackInfoBarCheckBox_Click(object sender, RoutedEventArgs e)
+        {
+            if (SettingsInitialized)
+                App.Instance.GlobalSave.Set("WaybackInfoBar", WaybackInfoBarCheckBox.IsChecked.GetValueOrDefault().ToString());
+        }
+        private void HomographInfoBarCheckBox_Click(object sender, RoutedEventArgs e)
+        {
+            if (SettingsInitialized)
+                App.Instance.GlobalSave.Set("HomographInfoBar", HomographInfoBarCheckBox.IsChecked.GetValueOrDefault().ToString());
+        }
+        private void PrivateTabsCheckBox_Click(object sender, RoutedEventArgs e)
+        {
+            if (SettingsInitialized)
+                App.Instance.GlobalSave.Set("PrivateTabs", PrivateTabsCheckBox.IsChecked.GetValueOrDefault().ToString());
+        }
+        private void RestoreTabsCheckBox_Click(object sender, RoutedEventArgs e)
+        {
+            if (SettingsInitialized)
+                App.Instance.GlobalSave.Set("RestoreTabs", RestoreTabsCheckBox.IsChecked.GetValueOrDefault().ToString());
+        }
+        private void DownloadFaviconsCheckBox_Click(object sender, RoutedEventArgs e)
+        {
+            if (SettingsInitialized)
+                App.Instance.GlobalSave.Set("Favicons", DownloadFaviconsCheckBox.IsChecked.GetValueOrDefault());
+        }
+        private void CheckUpdateCheckBox_Click(object sender, RoutedEventArgs e)
+        {
+            if (SettingsInitialized)
+                App.Instance.GlobalSave.Set("CheckUpdate", CheckUpdateCheckBox.IsChecked.GetValueOrDefault().ToString());
+        }
+        private void SmoothScrollCheckBox_Click(object sender, RoutedEventArgs e)
+        {
+            if (SettingsInitialized)
+            {
+                bool Toggle = SmoothScrollCheckBox.IsChecked.GetValueOrDefault();
+                App.Instance.GlobalSave.Set("SmoothScroll", Toggle.ToString());
+                SmoothScrollBehavior.IsDisabled = !Toggle;
+            }
+        }
+        private void QuickImageCheckBox_Click(object sender, RoutedEventArgs e)
+        {
+            if (SettingsInitialized)
+                App.Instance.GlobalSave.Set("QuickImage", QuickImageCheckBox.IsChecked.GetValueOrDefault().ToString());
+        }
+        /*private void SuppressErrorCheckBox_Click(object sender, RoutedEventArgs e)
+        {
+            if (SettingsInitialized)
+                App.Instance.GlobalSave.Set("SuppressError", SuppressErrorCheckBox.IsChecked.GetValueOrDefault().ToString());
+        }*/
+        private void SpellCheckCheckBox_Click(object sender, RoutedEventArgs e)
+        {
+            if (SettingsInitialized)
+            {
+                bool Enabled = SpellCheckCheckBox.IsChecked.GetValueOrDefault();
+                WebViewManager.RuntimeSettings.SpellCheck = Enabled;
+                App.Instance.GlobalSave.Set("SpellCheck", Enabled.ToString());
+                if (WebViewManager.IsCefInitialized)
+                {
+                    Cef.UIThreadTaskFactory.StartNew(delegate
+                    {
+                        var GlobalRequestContext = Cef.GetGlobalRequestContext();
+                        GlobalRequestContext.SetPreference("spellcheck.dictionaries", App.Instance.Languages.Select(i => i.Tooltip), out _);
+                        GlobalRequestContext.SetPreference("intl.accept_languages", App.Instance.Languages.Select(i => i.Tooltip), out _);
+                        GlobalRequestContext.SetPreference("browser.enable_spellchecking", Enabled, out _);
+                    });
+                }
+            }
+        }
+        private void SearchSuggestionsCheckBox_Click(object sender, RoutedEventArgs e)
+        {
+            if (SettingsInitialized)
+                App.Instance.SetSearchSuggestions(SearchSuggestionsCheckBox.IsChecked.GetValueOrDefault());
+        }
+        private void SmartSuggestionsCheckBox_Click(object sender, RoutedEventArgs e)
+        {
+            if (SettingsInitialized)
+                App.Instance.SetSmartSuggestions(SmartSuggestionsCheckBox.IsChecked.GetValueOrDefault());
+        }
+        private void RichSuggestionsCheckBox_Click(object sender, RoutedEventArgs e)
+        {
+            if (SettingsInitialized)
+                App.Instance.SetRichSuggestions(RichSuggestionsCheckBox.IsChecked.GetValueOrDefault());
+        }
+        private void OpenSearchCheckBox_Click(object sender, RoutedEventArgs e)
+        {
+            if (SettingsInitialized)
+                App.Instance.GlobalSave.Set("OpenSearch", OpenSearchCheckBox.IsChecked.GetValueOrDefault().ToString());
+        }
+        private void FullscreenPopupCheckBox_Click(object sender, RoutedEventArgs e)
+        {
+            if (SettingsInitialized)
+                App.Instance.GlobalSave.Set("FullscreenPopup", FullscreenPopupCheckBox.IsChecked.GetValueOrDefault().ToString());
+        }
+        private void MobileViewCheckBox_Click(object sender, RoutedEventArgs e)
+        {
+            if (SettingsInitialized)
+                App.Instance.SetMobileView(MobileViewCheckBox.IsChecked.GetValueOrDefault());
+        }
+        private void AntiTamperCheckBox_Click(object sender, RoutedEventArgs e)
+        {
+            if (SettingsInitialized)
+            {
+                bool Checked = AntiTamperCheckBox.IsChecked.GetValueOrDefault();
+                App.Instance.GlobalSave.Set("AntiTamper", Checked.ToString());
+            }
+        }
+        private void AntiFullscreenCheckBox_Click(object sender, RoutedEventArgs e)
+        {
+            if (SettingsInitialized)
+                App.Instance.GlobalSave.Set("AntiFullscreen", AntiFullscreenCheckBox.IsChecked.GetValueOrDefault().ToString());
+        }
+        private void AntiInspectDetectCheckBox_Click(object sender, RoutedEventArgs e)
+        {
+            if (SettingsInitialized)
+                App.Instance.GlobalSave.Set("AntiInspectDetect", AntiInspectDetectCheckBox.IsChecked.GetValueOrDefault().ToString());
+        }
+        private void BypassSiteMenuCheckBox_Click(object sender, RoutedEventArgs e)
+        {
+            if (SettingsInitialized)
+                App.Instance.GlobalSave.Set("BypassSiteMenu", BypassSiteMenuCheckBox.IsChecked.GetValueOrDefault().ToString());
+        }
+        private void TextSelectionCheckBox_Click(object sender, RoutedEventArgs e)
+        {
+            if (SettingsInitialized)
+                App.Instance.GlobalSave.Set("TextSelection", TextSelectionCheckBox.IsChecked.GetValueOrDefault().ToString());
+        }
+        private void RemoveFilterCheckBox_Click(object sender, RoutedEventArgs e)
+        {
+            if (SettingsInitialized)
+                App.Instance.GlobalSave.Set("RemoveFilter", RemoveFilterCheckBox.IsChecked.GetValueOrDefault().ToString());
+        }
+        private void RemoveOverlayCheckBox_Click(object sender, RoutedEventArgs e)
+        {
+            if (SettingsInitialized)
+                App.Instance.GlobalSave.Set("RemoveOverlay", RemoveOverlayCheckBox.IsChecked.GetValueOrDefault().ToString());
+        }
+        private void DownloadPromptCheckBox_Click(object sender, RoutedEventArgs e)
+        {
+            if (SettingsInitialized)
+            {
+                bool Value = DownloadPromptCheckBox.IsChecked.GetValueOrDefault();
+                WebViewManager.RuntimeSettings.DownloadPrompt = Value;
+                App.Instance.GlobalSave.Set("DownloadPrompt", Value.ToString());
+            }
+        }
+        private void TabUnloadingCheckBox_Click(object sender, RoutedEventArgs e)
+        {
+            if (SettingsInitialized)
+            {
+                App.Instance.GlobalSave.Set("TabUnloading", TabUnloadingCheckBox.IsChecked.GetValueOrDefault().ToString());
+                App.Instance.UpdateTabUnloadingTimer();
+            }
+        }
+
+        /*private void SendDiagnosticsCheckBox_Click(object sender, RoutedEventArgs e)
+        {
+            if (SettingsInitialized)
+                App.Instance.GlobalSave.Set("SendDiagnostics", SendDiagnosticsCheckBox.IsChecked.GetValueOrDefault().ToString());
+        }*/
+        private void WebNotificationsCheckBox_Click(object sender, RoutedEventArgs e)
+        {
+            if (SettingsInitialized)
+                App.Instance.GlobalSave.Set("WebNotifications", WebNotificationsCheckBox.IsChecked.GetValueOrDefault().ToString());
+        }
+        private void WebAppsCheckBox_Click(object sender, RoutedEventArgs e)
+        {
+            if (SettingsInitialized)
+                App.Instance.GlobalSave.Set("WebApps", WebAppsCheckBox.IsChecked.GetValueOrDefault().ToString());
+        }
+
+        private void DimUnloadedIconCheckBox_Click(object sender, RoutedEventArgs e)
+        {
+            if (SettingsInitialized)
+                App.Instance.SetDimUnloadedIcon(DimIconsWhenUnloadedCheckBox.IsChecked.GetValueOrDefault());
+        }
+        private void ShowUnloadedIconCheckBox_Click(object sender, RoutedEventArgs e)
+        {
+            if (SettingsInitialized)
+                App.Instance.GlobalSave.Set("ShowUnloadedIcon", ShowUnloadedIconCheckBox.IsChecked.GetValueOrDefault().ToString());
+        }
+        private void ShowUnloadTimeLeftCheckBox_Click(object sender, RoutedEventArgs e)
+        {
+            if (SettingsInitialized)
+            {
+                App.Instance.GlobalSave.Set("ShowUnloadProgress", ShowUnloadTimeLeftCheckBox.IsChecked.GetValueOrDefault().ToString());
+                App.Instance.UpdateTabUnloadingTimer();
+            }
+        }
+        private void BrowserHardwareAccelerationCheckBox_Click(object sender, RoutedEventArgs e)
+        {
+            if (SettingsInitialized)
+                App.Instance.GlobalSave.Set("BrowserHardwareAcceleration", BrowserHardwareAccelerationCheckBox.IsChecked.GetValueOrDefault().ToString());
+        }
+        private void JITCheckBox_Click(object sender, RoutedEventArgs e)
+        {
+            if (SettingsInitialized)
+                App.Instance.GlobalSave.Set("JIT", JITCheckBox.IsChecked.GetValueOrDefault().ToString());
+        }
+        private void StartupBoostCheckBox_Click(object sender, RoutedEventArgs e)
+        {
+            if (SettingsInitialized)
+            {
+                bool Value = StartupBoostCheckBox.IsChecked.GetValueOrDefault();
+                if (Value) StartupManager.EnableStartup(App.Instance.CurrentProfile.Name);
+                else StartupManager.DisableStartup(App.Instance.CurrentProfile.Name);
+                App.Instance.GlobalSave.Set("StartupBoost", Value.ToString());
+            }
+        }
+        private void OfferTranslateCheckBox_Click(object sender, RoutedEventArgs e)
+        {
+            if (SettingsInitialized)
+                App.Instance.GlobalSave.Set("OfferTranslate", OfferTranslateCheckBox.IsChecked.GetValueOrDefault().ToString());
+        }
+        private void ReduceDiskCheckBox_Click(object sender, RoutedEventArgs e)
+        {
+            if (SettingsInitialized)
+                App.Instance.GlobalSave.Set("ReduceDisk", ReduceDiskCheckBox.IsChecked.GetValueOrDefault().ToString());
+        }
+
+        private void TranslateButtonToggleButton_Click(object sender, RoutedEventArgs e)
+        {
+            if (SettingsInitialized)
+                App.Instance.SetAppearance(App.Instance.CurrentTheme, TabAlignmentComboBox.SelectedIndex, App.Instance.VerticalTabWidth, HomeButtonToggleButton.IsChecked.GetValueOrDefault(), TranslateButtonToggleButton.IsChecked.GetValueOrDefault(), ReaderButtonToggleButton.IsChecked.GetValueOrDefault(), ExtensionButtonComboBox.SelectedIndex, DownloadsButtonComboBox.SelectedIndex, FavouritesBarComboBox.SelectedIndex, QRButtonToggleButton.IsChecked.GetValueOrDefault(), WebEngineButtonToggleButton.IsChecked.GetValueOrDefault());
+        }
+        private void HomeButtonToggleButton_Click(object sender, RoutedEventArgs e)
+        {
+            if (SettingsInitialized)
+                App.Instance.SetAppearance(App.Instance.CurrentTheme, TabAlignmentComboBox.SelectedIndex, App.Instance.VerticalTabWidth, HomeButtonToggleButton.IsChecked.GetValueOrDefault(), TranslateButtonToggleButton.IsChecked.GetValueOrDefault(), ReaderButtonToggleButton.IsChecked.GetValueOrDefault(), ExtensionButtonComboBox.SelectedIndex, DownloadsButtonComboBox.SelectedIndex, FavouritesBarComboBox.SelectedIndex, QRButtonToggleButton.IsChecked.GetValueOrDefault(), WebEngineButtonToggleButton.IsChecked.GetValueOrDefault());
+        }
+        private void ReaderButtonToggleButton_Click(object sender, RoutedEventArgs e)
+        {
+            if (SettingsInitialized)
+                App.Instance.SetAppearance(App.Instance.CurrentTheme, TabAlignmentComboBox.SelectedIndex, App.Instance.VerticalTabWidth, HomeButtonToggleButton.IsChecked.GetValueOrDefault(), TranslateButtonToggleButton.IsChecked.GetValueOrDefault(), ReaderButtonToggleButton.IsChecked.GetValueOrDefault(), ExtensionButtonComboBox.SelectedIndex, DownloadsButtonComboBox.SelectedIndex, FavouritesBarComboBox.SelectedIndex, QRButtonToggleButton.IsChecked.GetValueOrDefault(), WebEngineButtonToggleButton.IsChecked.GetValueOrDefault());
+        }
+        private void QRButtonToggleButton_Click(object sender, RoutedEventArgs e)
+        {
+            if (SettingsInitialized)
+                App.Instance.SetAppearance(App.Instance.CurrentTheme, TabAlignmentComboBox.SelectedIndex, App.Instance.VerticalTabWidth, HomeButtonToggleButton.IsChecked.GetValueOrDefault(), TranslateButtonToggleButton.IsChecked.GetValueOrDefault(), ReaderButtonToggleButton.IsChecked.GetValueOrDefault(), ExtensionButtonComboBox.SelectedIndex, DownloadsButtonComboBox.SelectedIndex, FavouritesBarComboBox.SelectedIndex, QRButtonToggleButton.IsChecked.GetValueOrDefault(), WebEngineButtonToggleButton.IsChecked.GetValueOrDefault());
+        }
+        private void WebEngineButtonToggleButton_Click(object sender, RoutedEventArgs e)
+        {
+            if (SettingsInitialized)
+                App.Instance.SetAppearance(App.Instance.CurrentTheme, TabAlignmentComboBox.SelectedIndex, App.Instance.VerticalTabWidth, HomeButtonToggleButton.IsChecked.GetValueOrDefault(), TranslateButtonToggleButton.IsChecked.GetValueOrDefault(), ReaderButtonToggleButton.IsChecked.GetValueOrDefault(), ExtensionButtonComboBox.SelectedIndex, DownloadsButtonComboBox.SelectedIndex, FavouritesBarComboBox.SelectedIndex, QRButtonToggleButton.IsChecked.GetValueOrDefault(), WebEngineButtonToggleButton.IsChecked.GetValueOrDefault());
+        }
+
+        //int PreviousThemeIndex = 0;
+        private void ThemeSelection_SelectionChanged(object sender, SelectionChangedEventArgs e)
+        {
+            if (SettingsInitialized)
+            {
+                string Text = (string)((Border)ThemeSelection.SelectedItem).Tag;
+                Theme _Theme = App.Instance.GetTheme(Text);
+                if (_Theme == null)
+                    return;
+                if (Text == "Custom")
+                {
+                    ColorPickerWindow _ColorPickerWindow = new(Utils.HexToColor(App.Instance.GlobalSave.Get("CustomTheme")))//, false
+                    {
+                        Topmost = true
+                    };
+                    if (_ColorPickerWindow.ShowDialog() == true)
+                    {
+                        App.Instance.GlobalSave.Set("CustomTheme", Utils.ColorToHex(_ColorPickerWindow.UserInput.Color));
+                        _Theme = App.Instance.GenerateTheme(_ColorPickerWindow.UserInput.Color, "Custom");
+                        CustomThemeIcon.Foreground = new SolidColorBrush(_Theme.PrimaryColor);
+                        CustomThemeSelection.Background = new SolidColorBrush(_Theme.SecondaryColor);
+                    }
+                    /*else
+                    {
+                        ThemeSelection.SelectionChanged -= ThemeSelection_SelectionChanged;
+                        ThemeSelection.SelectedIndex = PreviousThemeIndex;
+                        ThemeSelection.SelectionChanged += ThemeSelection_SelectionChanged;
+                        return;
+                    }*/
+                }
+                App.Instance.SetAppearance(_Theme, TabAlignmentComboBox.SelectedIndex, App.Instance.VerticalTabWidth, HomeButtonToggleButton.IsChecked.GetValueOrDefault(), TranslateButtonToggleButton.IsChecked.GetValueOrDefault(), ReaderButtonToggleButton.IsChecked.GetValueOrDefault(), ExtensionButtonComboBox.SelectedIndex, DownloadsButtonComboBox.SelectedIndex, FavouritesBarComboBox.SelectedIndex, QRButtonToggleButton.IsChecked.GetValueOrDefault(), WebEngineButtonToggleButton.IsChecked.GetValueOrDefault());
+                ApplyTheme(_Theme);
+            }
+            //PreviousThemeIndex = ThemeSelection.SelectedIndex;
+        }
+        
+        private void ChangeDownloadPathButton_Click(object sender, RoutedEventArgs e)
+        {
+            OpenFolderDialog FolderDialog = new()
+            {
+                Title = "Select Folder",
+                InitialDirectory = DownloadPathText.Text
+            };
+            if (FolderDialog.ShowDialog() == true)
+            {
+                DownloadPathText.Text = FolderDialog.FolderName;
+                WebViewManager.RuntimeSettings.DownloadFolderPath = FolderDialog.FolderName;
+                App.Instance.GlobalSave.Set("DownloadPath", FolderDialog.FolderName);
+            }
+        }
+        
+        private void ChangeScreenshotPathButton_Click(object sender, RoutedEventArgs e)
+        {
+            OpenFolderDialog FolderDialog = new()
+            {
+                Title = "Select Folder",
+                InitialDirectory = ScreenshotPathText.Text
+            };
+            if (FolderDialog.ShowDialog() == true)
+            {
+                ScreenshotPathText.Text = FolderDialog.FolderName;
+                App.Instance.GlobalSave.Set("ScreenshotPath", FolderDialog.FolderName);
+            }
+        }
+
+        private void SwitchUserButton_Click(object sender, RoutedEventArgs e)
+        {
+            BrowserView.Action(Actions.SwitchUserPopup);
+        }
+
+        private async void ClearAllDataButton_Click(object sender, RoutedEventArgs e)
+        {
+            InformationDialogWindow InfoWindow = new("Warning", "Clear Browsing Data", "This will permanently delete all browsing data. Do you want to continue?", "\uea99", "Yes", "No")
+            {
+                Topmost = true
+            };
+            if (InfoWindow.ShowDialog() == true)
+            {
+                ClearAllDataButton.IsEnabled = false;
+                await App.Instance.ClearAllData();
+                ClearAllDataButton.IsEnabled = true;
+            }
+        }
+
+        private void PDFToggleButton_Click(object sender, RoutedEventArgs e)
+        {
+            if (SettingsInitialized)
+            {
+                WebViewManager.RuntimeSettings.PDFViewer = PDFViewerToggleButton.IsChecked.GetValueOrDefault();
+                App.Instance.GlobalSave.Set("PDF", WebViewManager.RuntimeSettings.PDFViewer);
+            }
+        }
+
+        private async void ExtensionRefreshButton_Click(object sender, RoutedEventArgs e)
+        {
+            if (SettingsInitialized)
+            {
+                ExtensionRefreshButton.IsEnabled = false;
+                switch (BrowserView.WebView.Engine)
+                {
+                    case WebEngineType.Chromium:
+                        await App.Instance.ExtensionManager.LoadCEFExtensions();
+                        break;
+                    case WebEngineType.ChromiumEdge:
+                        await App.Instance.ExtensionManager.LoadWebView2Extensions();
+                        break;
+                }
+                ExtensionRefreshButton.IsEnabled = true;
+            }
+        }
+
+        private void ExtensionRemoveButton_Click(object sender, RoutedEventArgs e)
+        {
+            if (SettingsInitialized)
+            {
+                if (sender is Button _Button && _Button.DataContext is Extension _Extension)
+                {
+                    string DialogIcon = "\uEA86";
+                    if (!string.IsNullOrEmpty(_Extension.ActionIcon))
+                        DialogIcon = _Extension.ActionIcon;
+                    InformationDialogWindow InfoWindow = new("Confirmation", $"Uninstall \"{_Extension.Name}\" extension", "Are you sure you want to remove this extension?", DialogIcon, "Remove", "Cancel")
+                    {
+                        Topmost = true
+                    };
+                    if (InfoWindow.ShowDialog() == true)
+                        App.Instance.ExtensionManager.UninstallExtension(_Extension);
+                }
+            }
+        }
+
+        private void PerformanceComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
+        {
+            if (SettingsInitialized)
+            {
+                App.Instance.GlobalSave.Set("Performance", PerformanceComboBox.SelectedIndex);
+                ReduceDiskCheckBox.IsEnabled = PerformanceComboBox.SelectedIndex == 0;
+                App.Instance.LiteMode = PerformanceComboBox.SelectedIndex == 0;
+                App.Instance.HighPerformanceMode = PerformanceComboBox.SelectedIndex == 2;
+            }
+        }
+
+        private void StandardFontComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
+        {
+            if (SettingsInitialized)
+            {
+                if (WebViewManager.IsCefInitialized)
+                {
+                    string Value = StandardFontComboBox.SelectedItem.ToString();
+                    Cef.UIThreadTaskFactory.StartNew(delegate
+                    {
+                        var GlobalRequestContext = Cef.GetGlobalRequestContext();
+                        GlobalRequestContext.SetPreference("webkit.webprefs.fonts.standard.Zyyy", Value, out string _);
+                    });
+                }
+            }
+        }
+
+        private void SerifFontComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
+        {
+            if (SettingsInitialized)
+            {
+                if (WebViewManager.IsCefInitialized)
+                {
+                    string Value = SerifFontComboBox.SelectedItem.ToString();
+                    Cef.UIThreadTaskFactory.StartNew(delegate
+                    {
+                        var GlobalRequestContext = Cef.GetGlobalRequestContext();
+                        GlobalRequestContext.SetPreference("webkit.webprefs.fonts.serif.Zyyy", Value, out string _);
+                    });
+                }
+            }
+        }
+
+        private void SansSerifFontComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
+        {
+            if (SettingsInitialized)
+            {
+                if (WebViewManager.IsCefInitialized)
+                {
+                    string Value = SansSerifFontComboBox.SelectedItem.ToString();
+                    Cef.UIThreadTaskFactory.StartNew(delegate
+                    {
+                        var GlobalRequestContext = Cef.GetGlobalRequestContext();
+                        GlobalRequestContext.SetPreference("webkit.webprefs.fonts.sansserif.Zyyy", Value, out string _);
+                    });
+                }
+            }
+        }
+
+        private void FixedFontComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
+        {
+            if (SettingsInitialized)
+            {
+                if (WebViewManager.IsCefInitialized)
+                {
+                    string Value = FixedFontComboBox.SelectedItem.ToString();
+                    Cef.UIThreadTaskFactory.StartNew(delegate
+                    {
+                        var GlobalRequestContext = Cef.GetGlobalRequestContext();
+                        GlobalRequestContext.SetPreference("webkit.webprefs.fonts.fixed.Zyyy", Value, out string _);
+                    });
+                }
+            }
+        }
+
+        private void MathFontComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
+        {
+            if (SettingsInitialized)
+            {
+                if (WebViewManager.IsCefInitialized)
+                {
+                    string Value = MathFontComboBox.SelectedItem.ToString();
+                    Cef.UIThreadTaskFactory.StartNew(delegate
+                    {
+                        var GlobalRequestContext = Cef.GetGlobalRequestContext();
+                        GlobalRequestContext.SetPreference("webkit.webprefs.fonts.math.Zyyy", Value, out string _);
+                    });
+                }
+            }
+        }
+
+        private void FontSizeSlider_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
+        {
+            if (SettingsInitialized)
+            {
+                if (WebViewManager.IsCefInitialized)
+                {
+                    int Value = (int)FontSizeSlider.Value;
+                    Cef.UIThreadTaskFactory.StartNew(delegate
+                    {
+                        var GlobalRequestContext = Cef.GetGlobalRequestContext();
+                        GlobalRequestContext.SetPreference("webkit.webprefs.default_font_size", Value, out string _);
+                    });
+                }
+            }
+        }
+
+        private void MinimumFontSizeSlider_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
+        {
+            if (SettingsInitialized)
+            {
+                if (WebViewManager.IsCefInitialized)
+                {
+                    int Value = (int)MinimumFontSizeSlider.Value;
+                    Cef.UIThreadTaskFactory.StartNew(delegate
+                    {
+                        var GlobalRequestContext = Cef.GetGlobalRequestContext();
+                        GlobalRequestContext.SetPreference("webkit.webprefs.minimum_font_size", Value, out string _);
+                    });
+                }
+            }
+        }
+        private void ExternalFontsCheckBox_Click(object sender, RoutedEventArgs e)
+        {
+            if (SettingsInitialized)
+                App.Instance.SetExternalFonts(ExternalFontsCheckBox.IsChecked.GetValueOrDefault());
+        }
+
+        public float ParseBandwidthInput()
+        {
+            if (!float.TryParse(BandwidthTextBox.Text, out float Value))
+                return 0;
+            return BandwidthUnitComboBox.SelectedIndex switch
+            {
+                0 => Value,
+                1 => Value / 1000,
+                _ => 0
+            };
+        }
+        private void NetworkLimitCheckBox_Click(object sender, RoutedEventArgs e)
+        {
+            if (SettingsInitialized)
+            {
+                bool Checked = NetworkLimitCheckBox.IsChecked.GetValueOrDefault();
+                App.Instance.GlobalSave.Set("NetworkLimit", Checked.ToString());
+                float Bandwidth = Checked ? float.Parse(App.Instance.GlobalSave.Get("Bandwidth")) : 0;
+                foreach (MainWindow _Window in App.Instance.AllWindows)
+                {
+                    foreach (Browser BrowserView in _Window.Tabs.Select(i => i.Content).Where(i => i != null && i.WebView != null && i.WebView.IsBrowserInitialized))
+                        BrowserView.LimitNetwork(0, Bandwidth, Bandwidth);
+                }
+            }
+        }
+
+        private void BandwidthTextBox_PreviewTextInput(object sender, TextCompositionEventArgs e)
+        {
+            if (e.Text.Any(char.IsLetter))
+                e.Handled = true;
+        }
+
+        private void BandwidthTextBox_KeyUp(object sender, KeyEventArgs e)
+        {
+            if (SettingsInitialized)
+            {
+                float Bandwidth = ParseBandwidthInput();
+                App.Instance.GlobalSave.Set("Bandwidth", Bandwidth);
+                if (!NetworkLimitCheckBox.IsChecked.GetValueOrDefault())
+                    Bandwidth = 0;
+                foreach (MainWindow _Window in App.Instance.AllWindows)
+                {
+                    foreach (Browser BrowserView in _Window.Tabs.Select(i => i.Content).Where(i => i != null && i.WebView != null && i.WebView.IsBrowserInitialized))
+                        BrowserView.LimitNetwork(0, Bandwidth, Bandwidth);
+                }
+            }
+        }
+
+        private void BandwidthUnitComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
+        {
+            if (SettingsInitialized)
+            {
+                float Bandwidth = ParseBandwidthInput();
+                App.Instance.GlobalSave.Set("Bandwidth", Bandwidth);
+                if (!NetworkLimitCheckBox.IsChecked.GetValueOrDefault())
+                    Bandwidth = 0;
+                foreach (MainWindow _Window in App.Instance.AllWindows)
+                {
+                    foreach (Browser BrowserView in _Window.Tabs.Select(i => i.Content).Where(i => i != null && i.WebView != null && i.WebView.IsBrowserInitialized))
+                        BrowserView.LimitNetwork(0, Bandwidth, Bandwidth);
+                }
+            }
+        }
+
+        private void AddSearchEngineButton_Click(object sender, RoutedEventArgs e)
+        {
+            DynamicDialogWindow _DynamicDialogWindow = new("Settings", "Add search engine", [new() { Name = "Name", Type = DialogInputType.Text, IsRequired = true }, new() { Name = "Search URL with {0} as query", Type = DialogInputType.Text, IsRequired = true }, new() { Name = "Suggestion URL with {0} as query", Type = DialogInputType.Text, IsRequired = false }], "\xf6fa")
+            {
+                Topmost = true
+            };
+            if (_DynamicDialogWindow.ShowDialog() == true)
+            {
+                SearchProvider _SearchProvider = new()
+                {
+                    Name = _DynamicDialogWindow.InputFields[0].Value.Trim(),
+                    Host = Utils.FastHost(_DynamicDialogWindow.InputFields[1].Value),
+                    SearchUrl = _DynamicDialogWindow.InputFields[1].Value + (_DynamicDialogWindow.InputFields[1].Value.Contains("{0}") ? string.Empty : "{0}"),
+                    SuggestUrl = _DynamicDialogWindow.InputFields[2].Value + (string.IsNullOrEmpty(_DynamicDialogWindow.InputFields[2].Value) ? string.Empty : (_DynamicDialogWindow.InputFields[2].Value.Contains("{0}") ? string.Empty : "{0}"))
+                };
+                App.Instance.SearchEngines.Add(_SearchProvider);
+                SearchEngineComboBox.SelectedValue = _SearchProvider;
+            }
+        }
+
+        private void RemoveSearchEngineButton_Click(object sender, RoutedEventArgs e)
+        {
+            App.Instance.SearchEngines.Remove(SearchEngineComboBox.SelectedValue as SearchProvider);
+            SearchEngineComboBox.SelectedItem = App.Instance.SearchEngines.FirstOrDefault();
+        }
+
+        private void EditSearchEngineButton_Click(object sender, RoutedEventArgs e)
+        {
+            SearchProvider _SearchProvider = SearchEngineComboBox.SelectedValue as SearchProvider;
+            DynamicDialogWindow _DynamicDialogWindow = new("Settings", "Edit search engine", [new() { Name = "Name", Type = DialogInputType.Text, IsRequired = true, Value = _SearchProvider.Name }, new() { Name = "Search URL with {0} as query", Type = DialogInputType.Text, IsRequired = true, Value = _SearchProvider.SearchUrl }, new() { Name = "Suggestion URL with {0} as query", Type = DialogInputType.Text, IsRequired = false, Value = _SearchProvider.SuggestUrl }], "\xe70f")
+            {
+                Topmost = true
+            };
+            if (_DynamicDialogWindow.ShowDialog() == true)
+            {
+                _SearchProvider.Name = _DynamicDialogWindow.InputFields[0].Value.Trim();
+                _SearchProvider.Host = Utils.FastHost(_DynamicDialogWindow.InputFields[1].Value);
+                _SearchProvider.SearchUrl = _DynamicDialogWindow.InputFields[1].Value + (_DynamicDialogWindow.InputFields[1].Value.Contains("{0}") ? string.Empty : "{0}");
+                _SearchProvider.SuggestUrl = _DynamicDialogWindow.InputFields[2].Value + (string.IsNullOrEmpty(_DynamicDialogWindow.InputFields[2].Value) ? string.Empty : (_DynamicDialogWindow.InputFields[2].Value.Contains("{0}") ? string.Empty : "{0}"));
+            }
+        }
+        private void SyncCheckBox_Click(object sender, RoutedEventArgs e)
+        {
+            if (SettingsInitialized)
+            {
+                App.Instance.GlobalSave.Set("Sync", SyncCheckBox.IsChecked.GetValueOrDefault().ToString());
+                SyncWarning.Visibility = Visibility.Collapsed;
+                if (SyncCheckBox.IsChecked.GetValueOrDefault())
+                {
+                    if (string.IsNullOrEmpty(App.Instance.GlobalSave.Get("SyncGitHub")))
+                    {
+                        SyncWarningText.Text = "No access token found.";
+                        SyncWarning.Visibility = Visibility.Visible;
+                    }
+                }
+            }
+        }
+
+        private void SyncToggleButton_Click(object sender, RoutedEventArgs e)
+        {
+            List<string> SyncedData = [];
+            if (SyncFavouritesToggleButton.IsChecked.GetValueOrDefault()) SyncedData.Add("Favourites");
+            //if (SyncTabsToggleButton.IsChecked.GetValueOrDefault()) SyncedData.Add("Tabs");
+            if (SyncSettingsToggleButton.IsChecked.GetValueOrDefault()) SyncedData.Add("Settings");
+            App.Instance.GlobalSave.Set("SyncData", string.Join(',', SyncedData));
+        }
+
+        private async void ChangeSyncGitHubButton_Click(object sender, RoutedEventArgs e)
+        {
+            try
+            {
+                DynamicDialogWindow _DynamicDialogWindow = new("Settings", "Change GitHub Access Token", [new() { Name = "Token", Type = DialogInputType.Text, IsRequired = false, Value = App.Instance.GlobalSave.Get("SyncGitHub") }], "\xee7e")
+                {
+                    Topmost = true
+                };
+                if (_DynamicDialogWindow.ShowDialog() == true)
+                {
+                    string Token = _DynamicDialogWindow.InputFields[0].Value.Trim();
+                    if (Token == App.Instance.GlobalSave.Get("SyncGitHub"))
+                        return;
+                    App.Instance.PreventSync = false;
+                    App.Instance.GlobalSave.Set("SyncGitHub", Token);
+                    App.Instance.GlobalSave.Set("SyncGist", "");
+                    SyncWarning.Visibility = Visibility.Collapsed;
+                    if (string.IsNullOrEmpty(Token))
+                    {
+                        App.Instance.GlobalSave.Set("Sync", false);
+                        SyncCheckBox.IsChecked = false;
+                    }
+                    else
+                    {
+                        HttpClient Client = new();
+                        Client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", Token);
+                        Client.DefaultRequestHeaders.UserAgent.ParseAdd($"SLBr/{App.Instance.ReleaseVersion}");
+                        var GistResponse = await Client.GetAsync("https://api.github.com/gists");
+                        if (GistResponse.IsSuccessStatusCode)
+                        {
+                            string JSON = await GistResponse.Content.ReadAsStringAsync();
+                            using JsonDocument Document = JsonDocument.Parse(JSON);
+                            foreach (JsonElement Gist in Document.RootElement.EnumerateArray())
+                            {
+                                if (Gist.GetProperty("description").GetString() == "SLBr Sync")
+                                {
+                                    App.Instance.GlobalSave.Set("SyncGist", Gist.GetProperty("id").GetString());
+                                    InformationDialogWindow InfoWindow = new("Settings", "Choose Sync Direction", "An existing sync was found for this GitHub account.\n\nDo you want to override existing data with the cloud data on application reboot?", "\ue753", "Yes", "No") { Topmost = true };
+                                    if (InfoWindow.ShowDialog() == true)
+                                        App.Instance.PreventSync = true;
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            catch { }
+        }
+
+        private void SettingsTabControl_SelectionChanged(object sender, SelectionChangedEventArgs e)
+        {
+            if (e.OriginalSource != sender)
+                return;
+            if (BrowserView != null && BrowserView.WebView != null && BrowserView.WebView.IsBrowserInitialized)
+            {
+                if (SettingsTabControl.SelectedItem is TabItem SelectedTabItem && SelectedTabItem.IsEnabled)
+                {
+                    UIElementCollection Pages = ((SelectedTabItem.Content as ScrollViewer).Content as Grid).Children;
+                    Pages[0].Visibility = Visibility.Visible;
+                    for (int i = 1; i < Pages.Count; i++)
+                        Pages[i].Visibility = Visibility.Collapsed;
+                    SetNavigation(SelectedTabItem, Pages);
+                }
+            }
+        }
+
+        private void SetNavigation(TabItem SelectedTabItem, UIElementCollection Pages)
+        {
+            string Name = Uri.EscapeDataString(SelectedTabItem.Header.ToString().ToLowerInvariant().AsSpan());
+            string? SubName = null;
+            foreach (Border Page in Pages)
+            {
+                if (Page.Visibility == Visibility.Visible)
+                {
+                    SubName = Page.Tag as string;
+                    break;
+                }
+            }
+            string SubPath = string.IsNullOrEmpty(SubName) ? "" : $"/{SubName}";
+            PreviousUrl = CurrentUrl;
+            CurrentUrl = $"slbr://settings/{Name}{SubPath}";
+            if (BrowserView.Address != CurrentUrl)
+                BrowserView.WebView?.ExecuteScript($"history.replaceState(null, \"\", \"{CurrentUrl}\");");
+        }
+
+        private void NavigateButton_Click(object sender, RoutedEventArgs e)
+        {
+            if (SettingsTabControl.SelectedItem is TabItem SelectedTabItem && SelectedTabItem.IsEnabled)
+            {
+                UIElementCollection Pages = ((SelectedTabItem.Content as ScrollViewer).Content as Grid).Children;
+                string Tag = ((FrameworkElement)sender).Tag.ToString();
+                if (Tag == "Return")
+                {
+                    Pages[0].Visibility = Visibility.Visible;
+                    for (int i = 1; i < Pages.Count; i++)
+                        Pages[i].Visibility = Visibility.Collapsed;
+                }
+                else
+                {
+                    Border? Target = null;
+                    foreach (Border Page in Pages)
+                    {
+                        if (Page.Tag as string == Tag)
+                        {
+                            Target = Page;
+                            Page.Visibility = Visibility.Visible;
+                        }
+                        else
+                            Page.Visibility = Visibility.Collapsed;
+                    }
+                    if (Target == null)
+                        Pages[0].Visibility = Visibility.Visible;
+                }
+                SetNavigation(SelectedTabItem, Pages);
+            }
+        }
+
+        private void AdBlockLists_SelectionChanged(object sender, SelectionChangedEventArgs e)
+        {
+            AdBlockDeleteButton.Visibility = AdBlockLists.SelectedItems.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
+        }
+
+        private void AdBlockAddButton_Click(object sender, RoutedEventArgs e)
+        {
+            DynamicDialogWindow _DynamicDialogWindow = new("Prompt", "Add Filter List",
+            [
+                new() { Name = "Name", IsRequired = true, Type = DialogInputType.Text },
+                new() { Name = "URL", IsRequired = true, Type = DialogInputType.Text },
+            ],
+            "\uecc8"
+            )
+            {
+                Topmost = true
+            };
+            if (_DynamicDialogWindow.ShowDialog() == true)
+                App.Instance.AdBlockLists.Add(new AdBlockList() { Url = _DynamicDialogWindow.InputFields[1].Value.Trim(), Name = _DynamicDialogWindow.InputFields[0].Value });
+        }
+
+        private void AdBlockEditButton_Click(object sender, RoutedEventArgs e)
+        {
+            if (((FrameworkElement)sender).DataContext is AdBlockList List)
+            {
+                List<InputField> Inputs = [
+                    new() { Name = "Name", IsRequired = true, Type = DialogInputType.Text, Value = List.Name },
+                    new() { Name = "URL", IsRequired = true, Type = DialogInputType.Text, Value = List.Url }
+                ];
+                DynamicDialogWindow _DynamicDialogWindow = new("Prompt", "Edit Filter List", Inputs, "\ue70f")
+                {
+                    Topmost = true
+                };
+                if (_DynamicDialogWindow.ShowDialog() == true)
+                {
+                    List.Name = _DynamicDialogWindow.InputFields[0].Value;
+                    List.Url = _DynamicDialogWindow.InputFields[1].Value.Trim();
+                }
+            }
+        }
+
+        private void AdBlockDeleteButton_Click(object sender, RoutedEventArgs e)
+        {
+            bool Changed = false;
+            if (Directory.Exists(App.Instance.AdBlockDataPath))
+            {
+                List<AdBlockList> Lists = AdBlockLists.SelectedItems.Cast<AdBlockList>().ToList();
+                for (int i = 0; i < Lists.Count; i++)
+                {
+                    AdBlockList _List = Lists[i];
+                    if (_List.IsEnabled)
+                        Changed = true;
+                    string FileName = Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(_List.Url))) + ".txt";
+                    string FilePath = Path.Combine(App.Instance.AdBlockDataPath, FileName);
+                    if (File.Exists(FilePath))
+                        File.Delete(FilePath);
+                    App.Instance.AdBlockLists.Remove(_List);
+                }
+            }
+            if (Changed)
+                App.Instance.SetAdBlockLists();
+        }
+
+        private void AdBlockCheckBox_Click(object sender, RoutedEventArgs e)
+        {
+            App.Instance.SetAdBlockLists();
+        }
+
+        private async void AdBlockUpdateButton_Click(object sender, RoutedEventArgs e)
+        {
+            AdBlockUpdateButton.IsEnabled = false;
+            if (Directory.Exists(App.Instance.AdBlockDataPath))
+            {
+                foreach (string FilePath in Directory.EnumerateFiles(App.Instance.AdBlockDataPath))
+                    File.Delete(FilePath);
+            }
+            await App.Instance.SetAdBlockLists();
+            BrowserView.Tab.ParentWindow.OpenToast("Filter lists updated", "\xe73a");
+            AdBlockUpdateButton.IsEnabled = true;
+        }
+
+        private void ListBoxItem_DeselectPreviewMouseLeftButtonDown(object sender, MouseButtonEventArgs e)
+        {
+            DependencyObject ClickedElement = e.OriginalSource as DependencyObject;
+            while (ClickedElement != null && ClickedElement != sender)
+            {
+                if (ClickedElement is Button)
+                    return;
+                ClickedElement = VisualTreeHelper.GetParent(ClickedElement);
+            }
+            if (sender is ListBoxItem Item && Item.IsSelected)
+            {
+                Item.IsSelected = false;
+                e.Handled = true;
+            }
+        }
+    }
+}

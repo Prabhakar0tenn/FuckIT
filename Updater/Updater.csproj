@@ -1,0 +1,29 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework Condition="$(NETCoreSdkVersion.StartsWith('8.'))">net8.0-windows7.0</TargetFramework>
+    <TargetFramework Condition="$(NETCoreSdkVersion.StartsWith('9.'))">net9.0-windows7.0</TargetFramework>
+    <TargetFramework Condition="'$(TargetFramework)' == ''">net9.0-windows7.0</TargetFramework>
+    <RollForward>LatestMajor</RollForward>
+	<RuntimeIdentifiers>win-x64</RuntimeIdentifiers>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <PublishAot>false</PublishAot>
+	<OptimizationPreference>Size</OptimizationPreference>
+    <InvariantGlobalization>true</InvariantGlobalization>
+    <SignAssembly>False</SignAssembly>
+    <Copyright>Copyright (c) SLT Softwares. All rights reserved.</Copyright>
+    <Company>$(Authors)</Company>
+    <LangVersion>preview</LangVersion>
+  </PropertyGroup>
+
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|AnyCPU'">
+    <DebugType>none</DebugType>
+  </PropertyGroup>
+
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|AnyCPU'">
+    <DebugType>none</DebugType>
+  </PropertyGroup>
+
+</Project>

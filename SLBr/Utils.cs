@@ -1,0 +1,1894 @@
+﻿/*Copyright © SLT Softwares. All rights reserved.
+Use of this source code is governed by a GNU license that can be found in the LICENSE file.*/
+
+using CefSharp;
+using CefSharp.Wpf.HwndHost;
+using Microsoft.Win32;
+using SLBr.Controls;
+using SLBr.WebView;
+using System.Buffers;
+using System.Diagnostics;
+using System.Diagnostics.CodeAnalysis;
+using System.Drawing;
+using System.Globalization;
+using System.IO;
+using System.Net;
+using System.Net.Http;
+using System.Runtime.InteropServices;
+using System.Security.Cryptography;
+using System.Text;
+using System.Text.Json;
+using System.Text.RegularExpressions;
+using System.Windows;
+using System.Windows.Controls;
+using System.Windows.Media;
+using System.Windows.Media.Imaging;
+using DColor = System.Drawing.Color;
+using MColor = System.Windows.Media.Color;
+
+namespace SLBr
+{
+    static class DllUtils
+    {
+        [DllImport("user32.dll")]
+        public static extern IntPtr GetAncestor(IntPtr hwnd, uint gaFlags);
+
+        [DllImport("user32.dll")]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        public static extern bool SetWindowDisplayAffinity(IntPtr hWnd, WindowDisplayAffinity affinity);
+
+        public enum WindowDisplayAffinity : uint
+        {
+            WDA_NONE = 0x00000000,
+            //WDA_MONITOR = 0x00000001
+            WDA_EXCLUDEFROMCAPTURE = 0x00000011
+        }
+
+        public delegate bool EnumWindowsProc(IntPtr hWnd, IntPtr lParam);
+
+        /*[DllImport("kernel32.dll")]
+        public static extern bool SetProcessWorkingSetSize(IntPtr proc, int min, int max);
+        [DllImport("psapi.dll")]
+        public static extern int EmptyWorkingSet(IntPtr hwProc);*/
+
+        [DllImport("dwmapi.dll")]
+        public static extern int DwmSetWindowAttribute(IntPtr hwnd, DwmWindowAttribute dwAttribute, ref int pvAttribute, int cbAttribute);
+
+        [DllImport("shell32.dll", SetLastError = true)]
+        public static extern void SetCurrentProcessExplicitAppUserModelID([MarshalAs(UnmanagedType.LPWStr)] string AppID);
+
+        [DllImport("user32.dll")]
+        public static extern IntPtr GetWindowDC(IntPtr hWnd);
+
+        [DllImport("user32.dll")]
+        public static extern int ReleaseDC(IntPtr hWnd, IntPtr hDC);
+
+        [DllImport("gdi32.dll")]
+        public static extern bool BitBlt(IntPtr hdcDest, int xDest, int yDest, int width, int height, IntPtr hdcSrc, int xSrc, int ySrc, int rop);
+
+        [DllImport("gdi32.dll")]
+        public static extern IntPtr CreateCompatibleDC(IntPtr hdc);
+
+        [DllImport("gdi32.dll")]
+        public static extern IntPtr CreateCompatibleBitmap(IntPtr hdc, int width, int height);
+
+        [DllImport("gdi32.dll")]
+        public static extern IntPtr SelectObject(IntPtr hdc, IntPtr hObject);
+
+        [DllImport("gdi32.dll")]
+        public static extern bool DeleteObject(IntPtr hObject);
+
+        [DllImport("gdi32.dll")]
+        public static extern bool DeleteDC(IntPtr hdc);
+
+        public const int SRCCOPY = 0x00CC0020;
+
+        [DllImport("user32.dll")]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        public static extern bool SetForegroundWindow(IntPtr hWnd);
+
+        [DllImport("user32.dll")]
+        public static extern IntPtr GetForegroundWindow();
+
+        [DllImport("user32.dll")]
+        public static extern bool EnumWindows(EnumWindowsProc lpEnumFunc, IntPtr lParam);
+
+        [DllImport("user32.dll")]
+        public static extern int GetWindowThreadProcessId(IntPtr hWnd, out uint lpdwProcessId);
+
+        [DllImport("user32.dll")]
+        public static extern bool IsWindowVisible(IntPtr hWnd);
+
+        [DllImport("user32.dll", SetLastError = true, CharSet = CharSet.Auto)]
+        public static extern int GetWindowText(IntPtr hWnd, StringBuilder lpString, int nMaxCount);
+
+        [DllImport("user32.dll", SetLastError = true)]
+        public static extern IntPtr SetParent(IntPtr hWndChild, IntPtr hWndNewParent);
+
+        [DllImport("user32.dll", SetLastError = true)]
+        public static extern int GetWindowLong(IntPtr hWnd, int nIndex);
+
+        [DllImport("user32.dll", SetLastError = true)]
+        public static extern int SetWindowLong(IntPtr hWnd, int nIndex, int dwNewLong);
+
+        /*[DllImport("user32.dll", SetLastError = true)]
+        public static extern bool MoveWindow(IntPtr hWnd, int X, int Y, int nWidth, int nHeight, bool bRepaint);*/
+
+        [DllImport("user32.dll", SetLastError = true)]
+        public static extern bool SetWindowPos(IntPtr hWnd, IntPtr hWndInsertAfter, int X, int Y, int cx, int cy, uint uFlags);
+
+        [DllImport("user32.dll")]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        public static extern bool GetWindowRect(IntPtr hWnd, out RECT lpRect);
+
+        public static readonly IntPtr HWND_TOPMOST = new(-1);
+        public static readonly IntPtr HWND_NOTOPMOST = new(-2);
+        public static readonly IntPtr HWND_TOP = new(0);
+        public static readonly IntPtr HWND_BOTTOM = new(1);
+
+        [StructLayout(LayoutKind.Sequential)]
+        public struct RECT
+        {
+            public int Left;
+            public int Top;
+            public int Right;
+            public int Bottom;
+        }
+
+        [DllImport("user32.dll", SetLastError = true)]
+        public static extern bool PostMessage(IntPtr hWnd, uint Msg, IntPtr wParam, IntPtr lParam);
+
+        [DllImport("user32.dll")]
+        public static extern IntPtr GetDesktopWindow();
+
+        [DllImport("user32.dll")]
+        public static extern IntPtr SendMessage(IntPtr hWnd, uint Msg, IntPtr wParam, IntPtr lParam);
+
+        /*[DllImport("user32.dll")]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        public static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);*/
+
+        [DllImport("user32.dll", EntryPoint = "CreateWindowEx", CharSet = CharSet.Unicode)]
+        public static extern IntPtr CreateWindowEx(int dwExStyle, string lpszClassName, string lpszWindowName, int style, int x, int y, int width, int height, IntPtr hwndParent, IntPtr hMenu, IntPtr hInst, IntPtr pvParam);
+
+        [DllImport("user32.dll", EntryPoint = "DestroyWindow", CharSet = CharSet.Unicode)]
+        public static extern bool DestroyWindow(IntPtr hwnd);
+
+        /*[DllImport("gdi32.dll")]
+        public static extern IntPtr CreateRectRgn(int nLeft, int nTop, int nRight, int nBottom);*/
+
+        /*[DllImport("user32.dll")]
+        public static extern int SetWindowRgn(IntPtr hWnd, IntPtr hRgn, bool bRedraw);*/
+
+        [DllImport("user32.dll", SetLastError = true)]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        public static extern bool EnumChildWindows(IntPtr hWndParent, EnumWindowsProc lpEnumFunc, IntPtr lParam);
+
+
+        [DllImport("wininet.dll")]
+        public extern static bool InternetGetConnectedState(out int description, int reservedValue);
+
+        [DllImport("user32.dll", SetLastError = true, CharSet = CharSet.Auto)]
+        public static extern int GetClassName(IntPtr hWnd, StringBuilder lpClassName, int nMaxCount);
+
+        public const int WM_KEYDOWN = 0x0100;
+        public const int WM_KEYUP = 0x0101;
+
+        //public const int WM_LBUTTONDOWN = 0x0201;
+        //public const int WM_RBUTTONDOWN = 0x0204;
+        public const int WM_CHAR = 0x0102;
+        //public const int WM_DEADCHAR = 0x0103;
+
+        [DllImport("user32.dll")]
+        public static extern void keybd_event(byte bVk, byte bScan, uint dwFlags, int dwExtraInfo);
+
+        public static string GetWindowTextRaw(IntPtr hWnd)
+        {
+            StringBuilder Builder = new(512);
+            GetWindowText(hWnd, Builder, Builder.Capacity);
+            return Builder.ToString();
+        }
+
+        /*[DllImport("user32.dll", SetLastError = true)]
+        public static extern IntPtr SetFocus(IntPtr hWnd);*/
+
+        public const int WM_NCHITTEST = 0x0084;
+        public const int WM_NCLBUTTONDOWN = 0x00A1;
+        public const int WM_NCLBUTTONUP = 0x00A2;
+        //public const int WM_NCRBUTTONDOWN = 0x00A4;
+        //public const int WM_CONTEXTMENU = 0x007B;
+        //public const int WM_NCLBUTTONDBLCLK = 0x00A3;
+        //public const int WM_GETMINMAXINFO = 0x0024;
+        public const int HTMAXBUTTON = 9;
+
+        public const uint SWP_NOREDRAW = 0x0008;
+
+        public const uint SWP_NOOWNERZORDER = 0x0200;
+        public const uint SWP_NOSENDCHANGING = 0x0400;
+
+        public const uint TOPMOST_FLAGS = SWP_NOACTIVATE | SWP_NOOWNERZORDER | SWP_NOSIZE | SWP_NOMOVE | SWP_NOREDRAW | SWP_NOSENDCHANGING;
+
+        //public const int WM_SYSKEYDOWN = 0x0104;
+
+        public const byte VK_LWIN = 0x5B;
+        public const byte VK_PERIOD = 0xBE;
+        //public const byte VK_Z = 0x5A;
+        public const uint KEYEVENTF_KEYUP = 0x0002;
+
+        [DllImport("user32.dll", SetLastError = true)]
+        public static extern IntPtr GetWindow(IntPtr hWnd, uint uCmd);
+
+        [DllImport("user32.dll")]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        public static extern bool IsWindow(IntPtr hWnd);
+
+        /*public const uint GW_HWNDFIRST = 0;
+        public const uint GW_HWNDLAST = 1;
+        public const uint GW_HWNDNEXT = 2;
+        public const uint GW_HWNDPREV = 3;*/
+        public const uint GW_OWNER = 4;
+        /*public const uint GW_CHILD = 5;
+        public const uint GW_ENABLEDPOPUP = 6;*/
+
+        //public const int SW_SHOWNA = 8;
+        //public const int SW_HIDE = 0;
+        //public const int SW_SHOWNORMAL = 1;
+        //public const int SW_SHOWMINIMIZED = 2;
+        //public const int SW_SHOWMAXIMIZED = 3;
+        //public const int SW_SHOWNOACTIVATE = 4;
+        //public const int SW_SHOW = 5;
+        //public const int SW_MINIMIZE = 6;
+        //public const int SW_SHOWDEFAULT = 10;
+
+        public const int GWL_STYLE = -16;
+        public const int GWL_EXSTYLE = -20;
+
+        public const int WS_CHILD = 0x40000000;
+        public const int WS_CAPTION = 0x00C00000;
+        public const int WS_THICKFRAME = 0x00040000;
+        public const int WS_MINIMIZE = 0x20000000;
+        public const int WS_MAXIMIZE = 0x01000000;
+        public const int WS_SYSMENU = 0x00080000;
+
+        //public const int WS_EX_LAYERED = 0x80000;
+        //public const int WS_EX_NOACTIVATE = 0x08000000;
+        public const int WS_EX_DLGMODALFRAME = 0x00000001;
+        public const int WS_EX_CLIENTEDGE = 0x00000200;
+        public const int WS_EX_STATICEDGE = 0x00020000;
+
+        public const uint SWP_NOZORDER = 0x0004;
+        public const uint SWP_FRAMECHANGED = 0x0020;
+        public const uint SWP_SHOWWINDOW = 0x0040;
+        public const uint SWP_NOACTIVATE = 0x0010;
+        public const int SWP_NOMOVE = 0x0002;
+        public const int SWP_NOSIZE = 0x0001;
+
+        public const int HOST_ID = 0x00000002;
+        /*[StructLayout(LayoutKind.Sequential)]
+        public struct POINT
+        {
+            public int X;
+            public int Y;
+        }*/
+
+        /*[DllImport("user32.dll")]
+        public static extern bool GetCursorPos(out POINT lpPoint);
+
+        [DllImport("user32.dll")]
+        public static extern bool ScreenToClient(IntPtr hWnd, ref POINT lpPoint);*/
+
+        [DllImport("shell32.dll", CharSet = CharSet.Auto)]
+        public static extern int SHGetKnownFolderPath(ref Guid id, int flags, IntPtr token, out IntPtr path);
+
+        public const int WM_SIZE = 0x0005;
+        public const int WM_SETFOCUS = 0x0007;
+        //public const int WM_KILLFOCUS = 0x0008;
+        public const int WM_MOUSEACTIVATE = 0x0021;
+        public const int WS_OVERLAPPED = 0x00000000;
+        public const int WS_POPUP = unchecked((int)0x80000000);
+        public const int WS_VISIBLE = 0x10000000;
+        //public const int WS_DISABLED = 0x08000000;
+        //public const int WS_CLIPSIBLINGS = 0x04000000;
+        public const int WS_CLIPCHILDREN = 0x02000000;
+        //public const int WS_BORDER = 0x00800000;
+        //public const int WS_DLGFRAME = 0x00400000;
+        //public const int WS_VSCROLL = 0x00200000;
+        //public const int WS_HSCROLL = 0x00100000;
+        //public const int WS_GROUP = 0x00020000;
+        //public const int WS_TABSTOP = 0x00010000;
+        public const int WS_MINIMIZEBOX = 0x00020000;
+        public const int WS_MAXIMIZEBOX = 0x00010000;
+
+        //public const int WS_POPUPWINDOW = WS_POPUP | WS_BORDER | WS_SYSMENU;
+
+        /*public const int WS_EX_NOPARENTNOTIFY = 0x00000004;
+        public const int WS_EX_TOPMOST = 0x00000008;
+        public const int WS_EX_ACCEPTFILES = 0x00000010;
+        public const int WS_EX_TRANSPARENT = 0x00000020;
+        public const int WS_EX_MDICHILD = 0x00000040;*/
+        public const int WS_EX_TOOLWINDOW = 0x00000080;
+        /*public const int WS_EX_WINDOWEDGE = 0x00000100;
+        public const int WS_EX_CONTEXTHELP = 0x00000400;
+        public const int WS_EX_RIGHT = 0x00001000;
+        public const int WS_EX_LEFT = 0x00000000;
+        public const int WS_EX_RTLREADING = 0x00002000;
+        public const int WS_EX_LTRREADING = 0x00000000;
+        public const int WS_EX_LEFTSCROLLBAR = 0x00004000;
+        public const int WS_EX_RIGHTSCROLLBAR = 0x00000000;
+        public const int WS_EX_CONTROLPARENT = 0x00010000;*/
+        public const int WS_EX_APPWINDOW = 0x00040000;
+
+        /*public const int WS_EX_OVERLAPPEDWINDOW = WS_EX_WINDOWEDGE | WS_EX_CLIENTEDGE;
+        public const int WS_EX_PALETTEWINDOW = WS_EX_WINDOWEDGE | WS_EX_TOOLWINDOW | WS_EX_TOPMOST;*/
+
+        public const int WM_SYSCOMMAND = 0x0112;
+        public const int SC_MOVE = 0xF010;
+        public const int SC_MINIMIZE = 0xF020;
+        public const int SC_SIZE = 0xF000;
+        public const int SC_RESTORE = 0xF120;
+        public const int SC_MAXIMIZE = 0xF030;
+
+        public const uint WM_CLOSE = 0x0010;
+
+        public const int WM_SETTINGCHANGE = 0x001A;
+        public const int WM_COPYDATA = 0x004A;
+        public const int HWND_BROADCAST = 0xffff;
+    }
+    static class MessageHelper
+    {
+        public static void SendDataMessage(Process targetProcess, string msg)
+        {
+            IntPtr StringMessageBuffer = Marshal.StringToHGlobalUni(msg);
+
+            COPYDATASTRUCT CopyData = new()
+            {
+                dwData = IntPtr.Zero,
+                lpData = StringMessageBuffer,
+                cbData = msg.Length * 2
+            };
+            IntPtr CopyDataBuffer = IntPtrAlloc(CopyData);
+
+            DllUtils.SendMessage(DllUtils.HWND_BROADCAST, DllUtils.WM_COPYDATA, IntPtr.Zero, CopyDataBuffer);
+
+            Marshal.FreeHGlobal(CopyDataBuffer);
+            Marshal.FreeHGlobal(StringMessageBuffer);
+        }
+
+        private static IntPtr IntPtrAlloc<T>(T param)
+        {
+            IntPtr retval = Marshal.AllocHGlobal(Marshal.SizeOf(param));
+            Marshal.StructureToPtr(param, retval, false);
+            return retval;
+        }
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    struct COPYDATASTRUCT
+    {
+        public IntPtr dwData;
+        public int cbData;
+        public IntPtr lpData;
+    }
+
+    [Flags]
+    public enum DwmWindowAttribute : uint
+    {
+        DWMWA_USE_IMMERSIVE_DARK_MODE = 20,
+        DWMWA_MICA_EFFECT = 1029,
+        DWMWA_CAPTION_COLOR = 35,
+        DWMWA_WINDOW_CORNER_PREFERENCE = 33,
+        //DWMWCP_ROUND = 2,
+    }
+
+    public static class UserAgentGenerator //https://source.chromium.org/chromium/chromium/src/+/main:components/embedder_support/user_agent_utils.cc
+    {
+        private static bool? PIsWindows11OrGreater;
+
+        public static bool IsWindows11OrGreater
+        {
+            get
+            {
+                if (PIsWindows11OrGreater.HasValue)
+                    return PIsWindows11OrGreater.Value;
+                PIsWindows11OrGreater = Environment.OSVersion.Version >= new Version(10, 0, 22000);
+                return PIsWindows11OrGreater.Value;
+            }
+        }
+
+        public static string GetUnifiedPlatform(PlatformID Platform)
+        {
+            switch (Platform)
+            {
+                case PlatformID.Unix:
+                    return "Linux; Android 10; K";
+                default:
+                    return "Windows NT 10.0; Win64; x64";
+            }
+        }
+
+        public static string GetCPUArchitecture()
+        {
+            switch (RuntimeInformation.ProcessArchitecture)
+            {
+                case Architecture.Arm:
+                case Architecture.Arm64:
+                    return "arm";
+                default:
+                    return "x86";
+            }
+        }
+
+        public static string GetPlatformVersion()
+        {
+            //if (!OperatingSystem.IsWindows()) return "0.0.0";
+            try
+            {
+                using RegistryKey? Key = RegistryKey.OpenBaseKey(RegistryHive.LocalMachine, RegistryView.Registry64);
+                using RegistryKey? SubKey = Key.OpenSubKey(@"SOFTWARE\Microsoft\WindowsRuntime\WellKnownContracts");
+                if (SubKey != null)
+                {
+                    if (SubKey.GetValue("Windows.Foundation.UniversalApiContract") is int ContractValue)
+                    {
+                        int Major = (ContractValue >> 16) & 0xFFFF;
+                        int Minor = ContractValue & 0xFFFF;
+                        return $"{Major}.{Minor}.0";
+                    }
+                }
+            }
+            catch { }
+            return "0.0.0";
+        }
+
+        public static string GetOSVersion()
+        {
+            string[] Parts = Environment.OSVersion.Version.ToString().Split('.');
+            return Parts[0] + "." + Parts[1];
+        }
+
+        public static string BuildChromeBrand() =>
+            $"Chrome/{Cef.ChromiumVersion.Split('.')[0]}.0.0.0";
+
+        public static string BuildUserAgentFromProduct(string Product, PlatformID? Platform = null) =>
+            BuildUserAgentFromOSAndProduct(GetUnifiedPlatform(Platform ?? Environment.OSVersion.Platform), $"{Product}{(Platform == PlatformID.Unix ? " Mobile" : "")}");
+
+        public static string BuildUserAgentFromOSAndProduct(string OSInfo, string Product) =>
+            $"Mozilla/5.0 ({OSInfo}) AppleWebKit/537.36 (KHTML, like Gecko) {Product} Safari/537.36";
+
+        public static WebUserAgentBrand GetProcessedGreasedBrandVersion(string GreaseyBrand, string GreaseyVersion)
+        {
+            string GreaseyMajorVersion;
+            if (Version.TryParse(GreaseyVersion, out Version _Version))
+                GreaseyMajorVersion = _Version.Major.ToString();
+            else
+                GreaseyMajorVersion = GreaseyVersion;
+            return new() { Brand = GreaseyBrand, Version = GreaseyMajorVersion };
+        }
+
+        public static WebUserAgentBrand GetGreasedUserAgentBrandVersion(int Seed)
+        {
+            string[] GreaseyChars = [" ", "(", ":", "-", ".", "/", ")", ";", "=", "?", "_"];
+            string[] GreasedVersions = ["8", "99", "24"];
+
+            string FirstChar = GreaseyChars[Seed % GreaseyChars.Length];
+            string SecondChar = GreaseyChars[(Seed + 1) % GreaseyChars.Length];
+            string GreaseyBrand = $"Not{FirstChar}A{SecondChar}Brand";
+
+            string GreaseyVersion = GreasedVersions[Seed % GreasedVersions.Length];
+
+            return GetProcessedGreasedBrandVersion(GreaseyBrand, GreaseyVersion);
+        }
+
+        private static readonly int[][] OrdersSize3 =
+        [
+            [0, 1, 2], [0, 2, 1], [1, 0, 2],
+            [1, 2, 0], [2, 0, 1], [2, 1, 0]
+        ];
+
+        private static readonly int[][] OrdersSize4 =
+        [
+            [0, 1, 2, 3], [0, 1, 3, 2], [0, 2, 1, 3], [0, 2, 3, 1], [0, 3, 1, 2],
+            [0, 3, 2, 1], [1, 0, 2, 3], [1, 0, 3, 2], [1, 2, 0, 3], [1, 2, 3, 0],
+            [1, 3, 0, 2], [1, 3, 2, 0], [2, 0, 1, 3], [2, 0, 3, 1], [2, 1, 0, 3],
+            [2, 1, 3, 0], [2, 3, 0, 1], [2, 3, 1, 0], [3, 0, 1, 2], [3, 0, 2, 1],
+            [3, 1, 0, 2], [3, 1, 2, 0], [3, 2, 0, 1], [3, 2, 1, 0]
+        ];
+
+        public static int[]? GetRandomOrder(int Seed, int Size)
+        {
+            if (Size < 2 || Size > 4)
+                return null;
+            if (Size == 2)
+                return [Seed % Size, (Seed + 1) % Size];
+            else if (Size == 3)
+                return OrdersSize3[Seed % OrdersSize3.Length];
+            else
+                return OrdersSize4[Seed % OrdersSize4.Length];
+        }
+
+        public static List<WebUserAgentBrand> ShuffleBrandList(List<WebUserAgentBrand> BrandVersionList, int Seed)
+        {
+            int Size = BrandVersionList.Count;
+            int[]? Order = GetRandomOrder(Seed, Size);
+
+            if (Order == null)
+                return BrandVersionList;
+
+            WebUserAgentBrand[] ShuffledArray = new WebUserAgentBrand[Size];
+
+            for (int i = 0; i < Order.Length; i++)
+                ShuffledArray[Order[i]] = BrandVersionList[i];
+
+            return new List<WebUserAgentBrand>(ShuffledArray);
+        }
+    }
+
+    public static class ClassExtensions
+    {
+        public static MColor ToMediaColor(this DColor Color) =>
+            MColor.FromArgb(Color.A, Color.R, Color.G, Color.B);
+        public static DColor ToDrawingColor(this MColor Color) =>
+            DColor.FromArgb(Color.A, Color.R, Color.G, Color.B);
+        public static int ToInt(this bool Self) =>
+            Self == true ? 1 : 0;
+        public static string Cut(this string Self, int MaxLength, bool AddEllipsis = false)
+        {
+            if (Self.Length <= MaxLength)
+                return Self;
+            return string.Concat(Self.AsSpan(0, MaxLength - (AddEllipsis ? 3 : 0)), AddEllipsis ? "..." : string.Empty);
+        }
+
+        public static void AddNoErrorFlag(this CefSettings Settings, string Key, string Value)
+        {
+            try { Settings.CefCommandLineArgs.Add(Key, Value); }
+            catch {
+                try
+                {
+                    string Comma = Value[0] == ',' ? "" : ",";
+                    Settings.CefCommandLineArgs[Key] += $"{Comma}{Value}";
+                }
+                catch { }
+            }
+        }
+
+        public static void AddNoErrorFlag(this CefSettings Settings, string Value)
+        {
+            try { Settings.CefCommandLineArgs.Add(Value); } catch { }
+        }
+
+        public static string ToTitleCase(this string Input)
+        {
+            if (string.IsNullOrEmpty(Input))
+                return Input;
+
+            char[] Characters = Input.ToCharArray();
+            bool DelayCapitalization = false;
+
+            for (int i = 0; i < Characters.Length; i++)
+            {
+                if (Characters[i] == ' ')
+                    DelayCapitalization = false;
+                else if (!DelayCapitalization)
+                {
+                    Characters[i] = char.ToUpperInvariant(Characters[i]);
+                    DelayCapitalization = true;
+                }
+            }
+
+            return new string(Characters);
+        }
+        
+        public static void SafeFreeze(this Freezable Object)
+        {
+            if (Object.CanFreeze)
+                Object.Freeze();
+        }
+    }
+
+    public static partial class Utils
+    {
+        private static bool? _IsSnapLayoutEnabled;
+        public static bool IsSnapLayoutEnabled
+        {
+            get
+            {
+                if (_IsSnapLayoutEnabled.HasValue)
+                    return _IsSnapLayoutEnabled.Value;
+                if (!UserAgentGenerator.IsWindows11OrGreater)
+                    _IsSnapLayoutEnabled = false;
+                else
+                {
+                    using RegistryKey? Key = Registry.CurrentUser.OpenSubKey(@"Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced");
+                    object? RegistryValueObject = Key?.GetValue("EnableSnapAssistFlyout");
+                    if (RegistryValueObject == null) _IsSnapLayoutEnabled = true;
+                    else _IsSnapLayoutEnabled = (int)RegistryValueObject > 0;
+                }
+                return _IsSnapLayoutEnabled.Value;
+            }
+        }
+
+        [GeneratedRegex(@"(?i)\b(?:https?://|file:///)(?:\[[^\]]+\]|localhost|(?:\d{1,3}\.){3}\d{1,3}|[a-z0-9\-\.]+)(?::\d+)?(?:/[^\s]*)?")]
+        public static partial Regex UrlRegex();
+
+        [GeneratedRegex(@"\b\d+(?:\.\d+)?\s+[a-zA-Z]{3}\s+(?:to|in)\s+[a-zA-Z]{3}\b")]
+        public static partial Regex SimpleCurrencyRegex();
+
+        [GeneratedRegex(@"^[\d\s\.\+\-\*/%\(\)]+$")]
+        public static partial Regex MathRegex();
+
+        [GeneratedRegex(@"(?<Amount>\d+(\.\d+)?)\s+(?<From>[A-Za-z]{3})\s+(?:to|in)\s+(?<To>[A-Za-z]{3})")]
+        public static partial Regex CurrencyRegex();
+
+        [GeneratedRegex(@"^translate\s+(?<Phrase>.+?)\s+to\s+(?<Lang>.+)", RegexOptions.IgnoreCase)]
+        public static partial Regex TranslateRegex();
+
+        public static System.Windows.Media.Brush GetContrastBrush(MColor BackgroundColor) =>
+            (0.299 * BackgroundColor.R + 0.587 * BackgroundColor.G + 0.114 * BackgroundColor.B) / 255 > 0.6 ? System.Windows.Media.Brushes.Black : System.Windows.Media.Brushes.White;
+        public static void OpenFileExplorer(string Url) =>
+            Process.Start(new ProcessStartInfo { Arguments = $"/select, \"{Url}\"", FileName = "explorer.exe" });
+
+        public static async void DownloadAndCopyImage(string ImageUrl)
+        {
+            try
+            {
+                using Stream _Stream = await App.MiniHttpClient.GetStreamAsync(ImageUrl);
+                BitmapImage Bitmap = new();
+                Bitmap.BeginInit();
+                Bitmap.StreamSource = _Stream;
+                Bitmap.CacheOption = BitmapCacheOption.OnLoad;
+                Bitmap.EndInit();
+                Bitmap.SafeFreeze();
+                App.Instance.CopyToClipboard(Bitmap, 1);
+            }
+            catch { }
+        }
+
+        public static bool IsEmptyOrWhiteSpace([NotNullWhen(false)] string? Value)
+        {
+            if (Value == null || Value.Length == 0)
+                return true;
+            for (int i = 0; i < Value.Length; i++)
+                if (!char.IsWhiteSpace(Value[i])) return false;
+            return true;
+        }
+
+        public static void ShowEmojiPicker()
+        {
+            //NOTE: Remove WinRT & Windows.SDK.NET usage.
+            //CoreInputView.GetForCurrentView().TryShow(CoreInputViewKind.Emoji));
+            DllUtils.keybd_event(DllUtils.VK_LWIN, 0, 0, 0);
+            DllUtils.keybd_event(DllUtils.VK_PERIOD, 0, 0, 0);
+
+            DllUtils.keybd_event(DllUtils.VK_PERIOD, 0, DllUtils.KEYEVENTF_KEYUP, 0);
+            DllUtils.keybd_event(DllUtils.VK_LWIN, 0, DllUtils.KEYEVENTF_KEYUP, 0);
+        }
+
+        public static T FindAncestorOfType<T>(DependencyObject Element) where T : DependencyObject
+        {
+            while (Element != null)
+            {
+                if (Element is T TypedElement)
+                    return TypedElement;
+                if (Element is FrameworkContentElement ContentElement)
+                    Element = ContentElement.Parent;
+                else
+                    Element = VisualTreeHelper.GetParent(Element);
+            }
+            return null;
+        }
+
+        public static (FrameworkElement, bool HasContextMenu) FindAncestorContextMenu(DependencyObject Element)
+        {
+            try
+            {
+                while (Element != null)
+                {
+                    /*if (Element is FrameworkElement _FrameworkElement && _FrameworkElement.ContextMenu != null)
+                        return true;*/
+                    if (Element is FrameworkElement _FrameworkElement)
+                    {
+                        if (_FrameworkElement.ContextMenu != null)
+                        {
+                            if (_FrameworkElement is TextBlock _TextBlock && TextBlockSelectionBehaviour.GetEnable(_TextBlock) && TextBlockSelectionBehaviour.GetHasContextMenu(_TextBlock))
+                            {
+                                if (!string.IsNullOrEmpty(TextBlockSelectionBehaviour.GetSelectedText(_TextBlock)))
+                                    return (_FrameworkElement, true);
+                            }
+                            else
+                                return (_FrameworkElement, true);
+                        }
+                        else if (_FrameworkElement is TextBlock _TextBlock && TextBlockSelectionBehaviour.GetEnable(_TextBlock) && !TextBlockSelectionBehaviour.GetHasContextMenu(_TextBlock))
+                            return (_FrameworkElement, false);
+                    }
+                    if (Element is FrameworkContentElement ContentElement)
+                        Element = ContentElement.Parent;
+                    else
+                        Element = VisualTreeHelper.GetParent(Element);
+                }
+            }
+            catch { }
+            return (null, false);
+        }
+
+        public static void RaiseUIAsync(this EventHandler Handler, object? Sender)
+        {
+            Application.Current?.Dispatcher.BeginInvoke(async () => Handler?.Invoke(Sender, null));
+        }
+        public static void RaiseUIAsync<T>(this EventHandler<T> Handler, object? Sender, T Args)
+        {
+            Application.Current?.Dispatcher.BeginInvoke(async () => Handler?.Invoke(Sender, Args));
+        }
+        public static void RaiseUIAsync<T>(this Action<T> Handler, T Args)
+        {
+            Application.Current?.Dispatcher.BeginInvoke(async () => Handler?.Invoke(Args));
+        }
+
+        public static string SanitizeFileName(string Name)
+        {
+            foreach (char Char in Path.GetInvalidFileNameChars())
+                Name = Name.Replace(Char, '_');
+            return Name;
+        }
+
+        public static string ResolveUrl(string BaseUrl, string RelativeAbsolutePath)
+        {
+            if (string.IsNullOrWhiteSpace(RelativeAbsolutePath)) return BaseUrl;
+            if (Uri.TryCreate(RelativeAbsolutePath, UriKind.Absolute, out var _Absolute)) return _Absolute.OriginalString;
+            return new Uri(new Uri(BaseUrl), RelativeAbsolutePath).ToString();
+        }
+
+        /*public static string? ParseAMPLink(string HTML, string BaseUrl)
+        {
+            if (string.IsNullOrEmpty(HTML) || string.IsNullOrEmpty(BaseUrl))
+                return null;
+            Match _Match = App.AMPRegex.Match(HTML);
+            if (!_Match.Success)
+                return null;
+            string Href = _Match.Groups[1].Value;
+            if (string.IsNullOrWhiteSpace(Href))
+                return null;
+            if (IsHttpScheme(Href))
+                return Href;
+            int SlashIndex = BaseUrl.IndexOf("/", 8);
+            string Origin = SlashIndex > 0 ? BaseUrl.Substring(0, SlashIndex) : BaseUrl;
+            if (Href.StartsWith("/"))
+                return Origin + Href;
+            else
+            {
+                int LastSlash = BaseUrl.LastIndexOf("/");
+                if (LastSlash >= 0)
+                    return BaseUrl.Substring(0, LastSlash + 1) + Href;
+                else
+                    return BaseUrl + "/" + Href;
+            }
+        }*/
+
+        public static string? GetAMPUrl(string Url)
+        {
+            string Payload = $"{{\"urls\":\"{Url}\"}}";
+            try
+            {
+                App.MiniHttpClient.DefaultRequestHeaders.Add("X-Goog-Api-Key", SECRETS.AMP_API_KEY);
+                var Response = App.MiniHttpClient.PostAsync(App.AMPEndpoint, new StringContent(Payload, Encoding.Default, "application/json")).Result;
+                if (!Response.IsSuccessStatusCode) return null;
+                var Json = System.Net.Http.Json.HttpContentJsonExtensions.ReadFromJsonAsync<JsonElement>(Response.Content).Result;
+                if (!Json.TryGetProperty("ampUrls", out var AMPUrls) || AMPUrls.GetArrayLength() == 0)
+                    return null;
+                return AMPUrls[0].GetProperty("ampUrl").GetString();
+            }
+            catch { }
+            return null;
+
+            //using HttpClient Client = new HttpClient();
+            /*Client.DefaultRequestHeaders.Add("X-Goog-Api-Key", SECRETS.AMPs[App.MiniRandom.Next(SECRETS.AMPs.Count)]);
+            var Response = await Client.PostAsJsonAsync(App.AMPEndpoint, new { urls = new[] { Url } });
+            if (!Response.IsSuccessStatusCode) return null;
+
+            var Json = Response.Content.ReadFromJsonAsync<JsonElement>().Result;
+            if (!Json.TryGetProperty("ampUrls", out var AMPUrls) || AMPUrls.GetArrayLength() == 0)
+                return null;*/
+            //cdnAmpUrl
+            //return AMPUrls[0].GetProperty("ampUrl").GetString();
+        }
+
+        public static bool IsValidImageBytes(byte[] Bytes)//string? GetImageExtensionFromBytes
+        {
+            if (Bytes != null && Bytes.Length >= 2)
+            {
+                if (Bytes[0] == 0xFF && Bytes[1] == 0xD8)
+                    return true;//".jpg";
+                if (Bytes[0] == 0x42 && Bytes[1] == 0x4D)
+                    return true;//".bmp";
+                if (Bytes.Length >= 4)
+                {
+                    if (Bytes[0] == 0x89 && Bytes[1] == 0x50 && Bytes[2] == 0x4E && Bytes[3] == 0x47)
+                        return true;//".png";
+                    if (Bytes[0] == 0x47 && Bytes[1] == 0x49 && Bytes[2] == 0x46 && Bytes[3] == 0x38)
+                        return true;//".gif";
+                    if (Bytes[0] == 0x00 && Bytes[1] == 0x00 && Bytes[2] == 0x01 && Bytes[3] == 0x00)
+                        return true;//".ico";
+                }
+            }
+            return false;
+        }
+
+        /*public static async Task RunSafeAsync(Func<Task> TaskFunction)
+        {
+            try
+            {
+                await TaskFunction().ConfigureAwait(false);
+            }
+            catch { }
+        }*/
+
+        /*public static void RunSafeFireAndForget(Func<Task> TaskFunction)
+        {
+            Task.Run(() => RunSafeAsync(TaskFunction));
+        }*/
+
+        [GeneratedRegex(@"\d+\.?\d*")]
+        public static partial Regex DigitsRegex();
+
+        public static MColor? ParseHTMLColor(string ColorString)
+        {
+            try
+            {
+                if (ColorString.StartsWith("rgb"))
+                {
+                    string[] Numbers = DigitsRegex().Matches(ColorString).Cast<Match>().Select(m => m.Value).ToArray();
+                    byte R = byte.Parse(Numbers[0]);
+                    byte G = byte.Parse(Numbers[1]);
+                    byte B = byte.Parse(Numbers[2]);
+                    /*if (Numbers.Length == 4)
+                    {
+                        byte A = (byte)Math.Round(float.Parse(Numbers[3], CultureInfo.InvariantCulture) * 255);
+                        return MColor.FromArgb(A, R, G, B);
+                    }*/
+                    return MColor.FromRgb(R, G, B);
+                }
+                else if (ColorString.StartsWith("hsl"))
+                {
+                    string[] Numbers = DigitsRegex().Matches(ColorString).Cast<Match>().Select(m => m.Value).ToArray();
+
+                    float H = byte.Parse(Numbers[0]);
+                    float S = byte.Parse(Numbers[1]) / 100f;
+                    float L = byte.Parse(Numbers[2]) / 100f;
+                    /*if (Numbers.Length == 4)
+                    {
+                        byte A = (byte)Math.Round(float.Parse(Numbers[3], CultureInfo.InvariantCulture));
+                        return ColorFromHSLA(H, S, L, A);
+                    }*/
+
+                    //float A = Numbers.Length == 4 ? byte.Parse(Numbers[3]) : 1.0f;
+                    return ColorFromHSL(H, S, L);//, A
+                }
+                try
+                {
+                    return (MColor)System.Windows.Media.ColorConverter.ConvertFromString(ColorString);
+                }
+                catch
+                {
+                    return ColorTranslator.FromHtml(ColorString).ToMediaColor();
+                }
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
+        public static void ColorToHSL(MColor _Color, out double Hue, out double Saturation, out double Lightness)
+        {
+            DColor ColorProcess = DColor.FromArgb(_Color.A, _Color.R, _Color.G, _Color.B);
+            Hue = ColorProcess.GetHue();
+            Saturation = ColorProcess.GetSaturation();
+            Lightness = ColorProcess.GetBrightness();
+        }
+
+        public static void ColorToHSV(MColor _Color, out double Hue, out double Saturation, out double Value)
+        {
+            double R = _Color.R / 255.0;
+            double G = _Color.G / 255.0;
+            double B = _Color.B / 255.0;
+
+            double Maximum = Math.Max(R, Math.Max(G, B));
+            double Minimum = Math.Min(R, Math.Min(G, B));
+            double Delta = Maximum - Minimum;
+
+            Hue = 0;
+            if (Delta != 0)
+            {
+                if (Maximum == R)
+                    Hue = 60 * (((G - B) / Delta) % 6);
+                else if (Maximum == G)
+                    Hue = 60 * (((B - R) / Delta) + 2);
+                else
+                    Hue = 60 * (((R - G) / Delta) + 4);
+            }
+            if (Hue < 0) Hue += 360;
+
+            Saturation = (Maximum == 0) ? 0 : Delta / Maximum;
+            Value = Maximum;
+        }
+
+        public static MColor ColorFromHSV(double Hue, double Saturation, double Value)
+        {
+            int Hi = Convert.ToInt32(Math.Floor(Hue / 60)) % 6;
+            double F = Hue / 60 - Math.Floor(Hue / 60);
+
+            Value *= 255;
+            byte V = (byte)Value;
+            byte P = (byte)(Value * (1 - Saturation));
+            byte Q = (byte)(Value * (1 - F * Saturation));
+            byte T = (byte)(Value * (1 - (1 - F) * Saturation));
+
+            return Hi switch
+            {
+                0 => MColor.FromRgb(V, T, P),
+                1 => MColor.FromRgb(Q, V, P),
+                2 => MColor.FromRgb(P, V, T),
+                3 => MColor.FromRgb(P, Q, V),
+                4 => MColor.FromRgb(T, P, V),
+                _ => MColor.FromRgb(V, P, Q),
+            };
+        }
+
+        public static MColor ColorFromHSL(double H, double S, double L)
+        {
+            double R;
+            double G;
+            double B;
+            if (S == 0)
+                R = G = B = L;
+            else
+            {
+                double Q = L < 0.5 ? L * (1 + S) : L + S - L * S;
+                double P = 2 * L - Q;
+                R = HueToRgb(P, Q, H + 1.0 / 3.0);
+                G = HueToRgb(P, Q, H);
+                B = HueToRgb(P, Q, H - 1.0 / 3.0);
+            }
+
+            return MColor.FromArgb(255, (byte)(R * 255), (byte)(G * 255), (byte)(B * 255));
+        }
+
+        public static int NativeColor(DColor _Color)
+        {
+            return ColorTranslator.ToWin32(_Color);
+        }
+
+        private static double HueToRgb(double P, double Q, double T)
+        {
+            if (T < 0) T += 1;
+            if (T > 1) T -= 1;
+            if (T < 1.0 / 6.0) return P + (Q - P) * 6 * T;
+            if (T < 1.0 / 2.0) return Q;
+            if (T < 2.0 / 3.0) return P + (Q - P) * (2.0 / 3.0 - T) * 6;
+            return P;
+        }
+
+        public static string ColorToHex(MColor _Color, bool WithHash = true)
+        {
+            string Hash = WithHash ? "#" : "";
+            return $"{Hash}{_Color.R:X2}{_Color.G:X2}{_Color.B:X2}";
+        }
+
+        public static MColor HexToColor(string Hex)
+        {
+            try
+            {
+                if (!Hex.StartsWith('#'))
+                    Hex = "#" + Hex;
+                return (MColor)System.Windows.Media.ColorConverter.ConvertFromString(Hex);
+            }
+            catch
+            {
+                return Colors.Black;
+            }
+        }
+
+        public static double GetHue(MColor _Color) =>
+            DColor.FromArgb(_Color.R, _Color.G, _Color.B).GetHue();
+
+        public static bool IsInternetAvailable() =>
+            DllUtils.InternetGetConnectedState(out int Description, 0);
+
+        public static BitmapImage ConvertBase64ToBitmapImage(string Base64)
+        {
+            using MemoryStream _Stream = new(Convert.FromBase64String(Base64));
+            BitmapImage _Bitmap = new();
+            _Bitmap.BeginInit();
+            _Bitmap.DecodePixelWidth = 20;
+            _Bitmap.DecodePixelHeight = 20;
+            _Bitmap.CacheOption = BitmapCacheOption.OnLoad;
+            //_Bitmap.CreateOptions = BitmapCreateOptions.DelayCreation;
+            _Bitmap.StreamSource = _Stream;
+            _Bitmap.EndInit();
+            _Bitmap.SafeFreeze();
+            return _Bitmap;
+        }
+
+        public static TreeViewItem? GetFirstTreeViewItem(TreeView Tree)
+        {
+            object? First = Tree.Items.Cast<object>().FirstOrDefault();
+            if (First != null)
+            {
+                TreeViewItem? Container = GetTreeViewItemContainer(Tree, First);
+                if (Container != null)
+                    return Container;
+            }
+            return null;
+        }
+        public static TreeViewItem? GetTreeViewItemContainer(ItemsControl Parent, object Item)
+        {
+            if (Parent.ItemContainerGenerator.ContainerFromItem(Item) is TreeViewItem Container)
+                return Container;
+            foreach (object Child in Parent.Items)
+            {
+                TreeViewItem? ChildContainer = Parent.ItemContainerGenerator.ContainerFromItem(Child) as TreeViewItem;
+                if (ChildContainer == null)
+                {
+                    Parent.UpdateLayout();
+                    ChildContainer = Parent.ItemContainerGenerator.ContainerFromItem(Child) as TreeViewItem;
+                }
+                if (ChildContainer != null)
+                {
+                    bool Expanded = ChildContainer.IsExpanded;
+                    ChildContainer.IsExpanded = true;
+                    ChildContainer.UpdateLayout();
+                    TreeViewItem? Result = GetTreeViewItemContainer(ChildContainer, Item);
+                    if (Result != null)
+                        return Result;
+                    ChildContainer.IsExpanded = Expanded;
+                }
+            }
+            return null;
+        }
+
+        public static Process GetAlreadyRunningInstance(Process CurrentProcess)
+        {
+            Process[] AllProcesses = Process.GetProcessesByName(CurrentProcess.ProcessName);
+            for (int i = 0; i < AllProcesses.Length; i++)
+            {
+                if (AllProcesses[i].Id != CurrentProcess.Id)
+                    return AllProcesses[i];
+            }
+            return null;
+        }
+
+        public static int GenerateRandomId() =>
+            App.MiniRandom.Next();
+
+        public enum FolderGuids
+        {
+            Downloads,
+            Pictures
+        }
+        private static Guid DownloadsGuid = new("374DE290-123F-4565-9164-39C4925E467B");
+        private static Guid PicturesGuid = new("33E28130-4E1E-4676-835A-98395C3BC3BB");
+        public static string GetFolderPath(FolderGuids FolderGuid)
+        {
+            IntPtr PathPtr = IntPtr.Zero;
+            try
+            {
+                Guid _FolderGuid = new();
+                switch (FolderGuid)
+                {
+                    case FolderGuids.Downloads:
+                        _FolderGuid = DownloadsGuid;
+                        break;
+                    case FolderGuids.Pictures:
+                        _FolderGuid = PicturesGuid;
+                        break;
+                }
+                DllUtils.SHGetKnownFolderPath(ref _FolderGuid, 0, IntPtr.Zero, out PathPtr);
+                return Marshal.PtrToStringUni(PathPtr);
+            }
+            finally
+            {
+                Marshal.FreeCoTaskMem(PathPtr);
+            }
+        }
+
+        //NOTE: Remove WinRT & Windows.SDK.NET usage.
+        //TODO: No internet explorer support.
+        public async static void Share(IWebView View, string Title, string Url)
+        {
+            View.Control?.Focus();
+            if (View is ChromiumWebView ChromiumView)
+            {
+                object? ShareResult = await View.EvaluateScriptAsync($"(async()=>{{try {{await navigator.share({{title:'{Title}',url:'{Url}'}});return 1;}} catch (e) {{return 0;}}}})();");
+                if (ShareResult?.ToString() == "1")
+                    return;
+                IBrowserHost Host = ChromiumView.Browser.GetBrowser().GetHost();
+                View.ExecuteScript($@"(()=>{{
+const shareHandler = (e) => {{
+    if (e.keyCode === 0x79) {{
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        navigator.share({{title:'{Title}',url:'{Url}'}});
+        window.removeEventListener('keydown',shareHandler,true);
+    }}
+}};
+window.addEventListener('keydown',shareHandler,true);
+}})();");
+                Host.SendKeyEvent(new() { WindowsKeyCode = 0x79, Type = KeyEventType.KeyDown });
+                Host.SendKeyEvent(new() { WindowsKeyCode = 0x79, Type = KeyEventType.KeyUp });
+            }
+            //TODO: Resolve WebView2 NotAllowedError: Failed to execute 'share' on 'Navigator': Must be handling a user gesture to perform a share request.
+            //TODO: navigator.share causes backwards navigation on custom schemes within WebView2.
+            else
+                View.ExecuteScript($"navigator.share({{title:'{Title}',url:'{Url}'}});");
+        }
+
+        //public static bool IsAdministrator() =>
+        //    new WindowsPrincipal(WindowsIdentity.GetCurrent()).IsInRole(WindowsBuiltInRole.Administrator);
+
+        public static (string, string) ParseCertificateIssue(string Certificate)
+        {
+            ReadOnlySpan<char> Span = Certificate.AsSpan().Trim();
+            string CN = string.Empty;
+            string O = string.Empty;
+            while (!Span.IsEmpty)
+            {
+                int Comma = Span.IndexOf(",");
+                ReadOnlySpan<char> Part = Comma >= 0 ? Span[..Comma] : Span;
+                int Equal = Part.IndexOf("=");
+                if (Equal > 0)
+                {
+                    ReadOnlySpan<char> Key = Part[..Equal].Trim();
+                    ReadOnlySpan<char> Value = Part[(Equal + 1)..].Trim();
+                    if (Key.Equals("CN", StringComparison.Ordinal))
+                        CN = Value.ToString();
+                    else if (Key.Equals("O", StringComparison.Ordinal))
+                        O = Value.ToString();
+                }
+                Span = Comma >= 0 ? Span[(Comma + 1)..].TrimStart() : default;
+            }
+            return (CN, O);
+        }
+
+        public static string GetScheme(string Url)
+        {
+            int SchemeSeparatorIndex = Url.IndexOf(':');
+            if (SchemeSeparatorIndex != -1)
+                return Url[..SchemeSeparatorIndex];
+            return string.Empty;
+        }
+
+        public static string GetFileExtension(ReadOnlySpan<char> Url)
+        {
+            int Query = Url.IndexOf("?");
+            if (Query >= 0)
+                Url = Url[..Query];
+
+            int Hash = Url.IndexOf("#");
+            if (Hash >= 0)
+                Url = Url[..Hash];
+
+            int Slash = Url.LastIndexOf("/");
+            if (Slash >= 0)
+                Url = Url[(Slash + 1)..];
+
+            int Dot = Url.LastIndexOf(".");
+            return Dot >= 0 ? Url[Dot..].ToString() : string.Empty;
+        }
+
+        public static bool IsProgramUrl(string Url) =>
+            Url.StartsWith("callto:") || Url.StartsWith("mailto:") || Url.StartsWith("news:") || Url.StartsWith("feed:");
+        public static bool IsHttpScheme(string Url) =>
+            Url.StartsWith("https:") || Url.StartsWith("http:");
+
+        public static bool IsDomain(string Url)
+        {
+            try
+            {
+                string Host = new IdnMapping().GetAscii(FastHost(Url));
+                int LastDot = Host.LastIndexOf('.');
+                if (LastDot <= 0 || LastDot == Host.Length - 1)
+                    return false;
+                string SLD = Host[..LastDot];
+                foreach (char _Char in SLD)
+                    //INFO: Underscores are allowed in Chromium "a_b.com"
+                    if (!char.IsLetterOrDigit(_Char) && _Char != '_' && _Char != '-' && _Char != '.')
+                        return false;
+                string TLD = Host[(LastDot + 1)..];
+                if (IsAlphabeticalTLD(TLD))
+                    return true;
+                if (IsPunycodeTLD(TLD))
+                    return true;
+            }
+            catch { }
+            return false;
+        }
+        public static bool IsAlphabeticalTLD(string TLD)
+        {
+            foreach (char _Char in TLD)
+                if (!char.IsLetter(_Char))
+                    return false;
+            return TLD.Length >= 2;
+        }
+        //https://xn--j1ay.xn--p1ai/
+        public static bool IsPunycodeTLD(string TLD)
+        {
+            if (!TLD.StartsWith("xn--"))
+                return false;
+            if (TLD.Length <= 4)
+                return false;
+            for (int i = 4; i < TLD.Length; i++)
+            {
+                char _Char = TLD[i];
+                if (!(char.IsLetterOrDigit(_Char) || _Char == '-'))
+                    return false;
+            }
+            return true;
+        }
+        public static bool IsProtocolNotHttp(string Url) =>
+            !IsHttpScheme(Url) && IsProtocol(Url);
+        public static bool IsProtocol(ReadOnlySpan<char> Url)
+        {
+            int Colon = Url.IndexOf(':');
+            if (Colon < 1)
+                return false;
+            if (!char.IsLetter(Url[0]))
+                return false;
+            ReadOnlySpan<char> Scheme = Url[..Colon];
+            if (Scheme.Equals("localhost", StringComparison.OrdinalIgnoreCase)) return false;
+            for (int i = 1; i < Colon; i++)
+            {
+                char _Char = Url[i];
+                if (!char.IsLetterOrDigit(_Char) && _Char != '+' && _Char != '-' && _Char != '.')
+                    return false;
+            }
+            return Url.Length > Colon + 2;
+        }
+        public static SearchValues<char> HostEndSearchValues = SearchValues.Create("/?#");
+        //TODO: Validate domain TLDs from https://data.iana.org/TLD/tlds-alpha-by-domain.txt
+        public static bool IsUrl(string Url)
+        {
+            if (IsCode(Url))
+                return false;
+            /*if (Uri.IsWellFormedUriString(Url, UriKind.RelativeOrAbsolute))// && !Uri.IsWellFormedUriString(Uri.EscapeDataString(Url), UriKind.RelativeOrAbsolute))
+                return true;*/
+
+            ReadOnlySpan<char> Scheme = string.Empty;
+
+            Url = CleanUrl(Url, true, true, true, false, false);
+
+            ReadOnlySpan<char> _Span = Url.AsSpan();
+            int Protocol = _Span.IndexOf(":///");
+            if (Protocol >= 0)
+            {
+                Scheme = _Span[..Protocol];
+                _Span = _Span[(Protocol + 4)..];
+            }
+            else
+            {
+                Protocol = _Span.IndexOf("://");
+                if (Protocol >= 0)
+                {
+                    Scheme = _Span[..Protocol];
+                    _Span = _Span[(Protocol + 3)..];
+                }
+                else
+                {
+                    Protocol = _Span.IndexOf(":");
+                    if (Protocol >= 0)
+                    {
+                        Scheme = _Span[..Protocol];
+                        _Span = _Span[(Protocol + 1)..];
+                    }
+                }
+            }
+
+            int HostEnd = _Span.IndexOfAny(HostEndSearchValues);
+            ReadOnlySpan<char> Host = HostEnd >= 0 ? _Span[..HostEnd] : _Span;
+
+            if (Protocol == -1 || Scheme is "http" or "https")
+            {
+                string HostString = NormalizeIP(RemovePort(Host.ToString()));
+                return HostString.Equals("localhost") || IsDomain(HostString) || IsIPAddress(HostString);
+            }
+            else
+                return !Scheme.Contains(' ');
+
+            //TODO: Validate path?
+            /*if (HostEnd >= 0)
+            {
+                ReadOnlySpan<char> _Path = _Span[HostEnd..];
+            }*/
+        }
+        public static string RemovePort(string Host)
+        {
+            if (Host.StartsWith('['))
+            {
+                int End = Host.IndexOf(']');
+                if (End >= 0)
+                    return Host[..(End + 1)];
+            }
+            int Colon = Host.LastIndexOf(':');
+            if (Colon > 0 && Host.Count(c => c == ':') == 1)
+                return Host[..Colon];
+            return Host;
+        }
+        public static bool IsCode(string Url) =>
+            Url.StartsWith("javascript:") || Url.StartsWith("view-source:") || Url.StartsWith("localhost:") || Url.StartsWith("data:") || Url.StartsWith("blob:");
+        public static bool IsCustomScheme(string Url) =>
+            !IsHttpScheme(Url) && !IsCode(Url) && IsProtocol(Url);
+        public static bool IsProprietaryCodec(string Extension) =>
+            Extension is ".mp4" or ".m4a" or ".aac" or ".m4v" or ".mov" or ".mp3" or ".wma" or ".wmv";
+        public static bool IsIPAddress(string Host) =>
+            (Host.Contains('.') || Host.Contains(':')) && IPAddress.TryParse(Host, out _);
+
+        public static string GenerateSID()
+        {
+            string TimePart = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds().ToString("x");
+            byte[] RandomBytes = new byte[8];
+            RandomNumberGenerator.Fill(RandomBytes);
+            string RandomPart = Convert.ToHexStringLower(RandomBytes);
+            return (TimePart + RandomPart)[..16];
+        }
+
+        public static string GetProtocolAppName(string Protocol)
+        {
+            Protocol = Protocol.ToLowerInvariant();
+            string? Name = GetRegistryProtocol(Registry.CurrentUser, @"Software\Classes\" + Protocol);
+            if (Name != null)
+                return Name;
+            Name = GetRegistryProtocol(Registry.ClassesRoot, Protocol);
+            if (Name != null)
+                return Name;
+            return Protocol;
+        }
+
+
+        public static string GetRegistryProtocol(RegistryKey Root, string SubKeyPath)
+        {
+            try
+            {
+                using RegistryKey? Key = Root.OpenSubKey(SubKeyPath);
+                if (Key == null)
+                    return null;
+                using RegistryKey? CommandKey = Key.OpenSubKey(@"shell\open\command");
+                string Command = (string)CommandKey?.GetValue(null);
+                if (!string.IsNullOrWhiteSpace(Command))
+                {
+                    string _ExecutablePath = Command.Split('"')[Command.StartsWith('"') ? 1 : 0];
+                    if (File.Exists(_ExecutablePath))
+                    {
+                        FileVersionInfo Info = FileVersionInfo.GetVersionInfo(_ExecutablePath);
+                        return Info.ProductName ?? Info.FileDescription ?? Path.GetFileNameWithoutExtension(_ExecutablePath);
+                    }
+                }
+            }
+            catch { }
+            return null;
+        }
+        public static string GetProtocolName(string Protocol)
+        {
+            return Protocol switch
+            {
+                "ms-settings" => "Windows Settings",
+                "ms-photos" => "Microsoft Photos",
+                "ms-store" => "Microsoft Store",
+                "mailto" => "Mail",
+                "tel" => "Phone",
+                _ => GetProtocolAppName(Protocol)
+            };
+        }
+
+        public static string RemovePrefix(string Input, string Prefix, bool CaseSensitive = false, bool FromEnd = false)
+        {
+            ReadOnlySpan<char> InputSpan = Input.AsSpan();
+            ReadOnlySpan<char> PrefixSpan = Prefix.AsSpan();
+
+            if (FromEnd)
+            {
+                if (InputSpan.Length < PrefixSpan.Length) return Input;
+                var Tail = InputSpan[^PrefixSpan.Length..];
+                bool Match = CaseSensitive ? Tail.SequenceEqual(PrefixSpan) : Tail.Equals(PrefixSpan, StringComparison.OrdinalIgnoreCase);
+                return Match ? InputSpan[..^PrefixSpan.Length].ToString() : Input;
+            }
+            else
+            {
+                if (InputSpan.Length < PrefixSpan.Length) return Input;
+                var Head = InputSpan[..PrefixSpan.Length];
+                bool Match = CaseSensitive ? Head.SequenceEqual(PrefixSpan) : Head.Equals(PrefixSpan, StringComparison.OrdinalIgnoreCase);
+                return Match ? InputSpan[PrefixSpan.Length..].ToString() : Input;
+            }
+        }
+        public static string FilterUrlForBrowser(string Url, string SearchEngineUrl)
+        {
+            if (string.IsNullOrWhiteSpace(Url))
+                return Url;
+
+            Url = Url.Trim();
+
+            if (!Url.StartsWith("domain:") && !Url.StartsWith("search:"))
+            {
+                if (IsProgramUrl(Url))
+                {
+                    try { Process.Start(new ProcessStartInfo(Url) { UseShellExecute = true }); }
+                    catch { }
+                    return Url;
+                }
+                if (IsCode(Url))
+                    return Url;
+                if (IsUrl(Url))
+                    return FixUrl(Url);
+                Url = "search:" + Url;
+            }
+            ReadOnlySpan<char> Span = Url.AsSpan();
+            if (Span.StartsWith("search:"))
+            {
+                ReadOnlySpan<char> Query = Span[7..];
+                string Encoded = Uri.EscapeDataString(Query);
+                return string.IsNullOrEmpty(SearchEngineUrl) ? FixUrl(Encoded) : FixUrl(string.Format(SearchEngineUrl, Encoded));
+            }
+            if (Span.StartsWith("domain:"))
+                return FixUrl(Span[7..].ToString());
+            return Url;
+        }
+
+        //TODO: Higher memory usage observed in FastHost in comparison to Host.
+        public static string FastHost(string Url, bool RemoveTrivialSubdomain = true, bool KeepProtocol = false)
+        {
+            if (string.IsNullOrEmpty(Url))
+                return Url;
+            ReadOnlySpan<char> Span = Url.AsSpan().Trim();
+
+            int Protocol = Span.IndexOf("://");
+            ReadOnlySpan<char> ProtocolSpan = [];
+            if (Protocol >= 0)
+            {
+                if (KeepProtocol)
+                    ProtocolSpan = Span[..(Protocol + 3)];
+                Span = Span[(Protocol + 3)..];
+            }
+
+            if (RemoveTrivialSubdomain)
+            {
+                if (Span.StartsWith("www.") && CanRemoveTrivialSubdomain(Span[4..]))
+                    Span = Span[4..];
+                else if (Span.StartsWith("m.") && CanRemoveTrivialSubdomain(Span[2..]))
+                    Span = Span[2..];
+            }
+
+            int Separator = Span.IndexOfAny(HostEndSearchValues);
+            if (Separator >= 0)
+                Span = Span[..Separator];
+
+            /*if (!KeepProtocol && Span.Length == Url.Length)
+                return Url;*/
+            if (KeepProtocol && !ProtocolSpan.IsEmpty)
+                return string.Concat(ProtocolSpan, Span);
+            return Span.ToString();
+        }
+        public static string Host(string Url, bool RemoveTrivialSubdomain = true)
+        {
+            string Host = CleanUrl(Url, true, false, true, RemoveTrivialSubdomain);
+            if (IsHttpScheme(Url) || Url.StartsWith("file:///"))
+            {
+                int SlashIndex = Host.IndexOf('/');
+                return SlashIndex >= 0 ? Host[..SlashIndex] : Host;
+            }
+            return Host;
+        }
+        public static string HostOnlyHTTP(string Url, bool RemoveTrivialSubdomain = true)
+        {
+            string Host = CleanUrl(Url, true, true, true, RemoveTrivialSubdomain, false);
+            if (IsHttpScheme(Url))
+            {
+                int Protocol = Host.IndexOf("://");
+                if (Protocol >= 0)
+                    Host = Host[(Protocol + 3)..];
+                int SlashIndex = Host.IndexOf('/');
+                return SlashIndex >= 0 ? Host[..SlashIndex] : Host;
+            }
+            return Host;
+        }
+        //TODO: Switch to public suffix list detection
+        public static bool CanRemoveTrivialSubdomain(ReadOnlySpan<char> Host)
+        {
+            int Dots = 0;
+            foreach (char _Char in Host)
+                if (_Char == '.') Dots++;
+            return Dots >= 1;//Switch to 2 to support "www.co.uk"
+        }
+        public static string CleanUrl(string Url, bool RemoveParameters = false, bool RemoveLastSlash = true, bool RemoveFragment = true, bool RemoveTrivialSubdomain = false, bool RemoveProtocol = true)
+        {
+            if (string.IsNullOrWhiteSpace(Url))
+                return Url;
+            ReadOnlySpan<char> Span = Url.AsSpan().Trim();
+            if (RemoveParameters)
+            {
+                int ToRemoveIndex = Span.LastIndexOf("?");
+                if (ToRemoveIndex >= 0)
+                    Span = Span[..ToRemoveIndex];
+            }
+            if (RemoveFragment)
+            {
+                int ToRemoveIndex = Span.LastIndexOf("#");
+                if (ToRemoveIndex >= 0)
+                    Span = Span[..ToRemoveIndex];
+            }
+
+            Url = Span.ToString();
+
+            if (RemoveProtocol)
+            {
+                Url = RemovePrefix(Url, "http://");
+                Url = RemovePrefix(Url, "https://");
+                Url = RemovePrefix(Url, "file:///");
+            }
+            if (RemoveLastSlash && Url.Length > 0 && Url[^1] == '/')
+                Url = Url[..^1];
+
+            if (RemoveTrivialSubdomain)
+            {
+                if (Url.StartsWith("www.") && CanRemoveTrivialSubdomain(Url.AsSpan()[4..]))
+                    Url = Url[4..];
+                else if (Url.StartsWith("m.") && CanRemoveTrivialSubdomain(Url.AsSpan()[2..]))
+                    Url = Url[2..];
+            }
+            return Url;
+        }
+        public static string FixUrl(string Url)
+        {
+            if (string.IsNullOrWhiteSpace(Url))
+                return Url;
+            ReadOnlySpan<char> _Span = Url.AsSpan().Trim();
+            if (!IsProtocol(Url))
+                _Span = ((_Span.StartsWith("localhost:") ? "http://" : "https://") + Url).AsSpan();
+            int Protocol = _Span.IndexOf("://");
+            if (Protocol < 0)
+                return _Span.ToString();
+            ReadOnlySpan<char> Scheme = _Span[..(Protocol + 3)];
+            ReadOnlySpan<char> Rest = _Span[(Protocol + 3)..];
+
+            ReadOnlySpan<char> Host;
+            ReadOnlySpan<char> _Path;
+
+            if (Rest.Length > 0 && Rest[0] == '[')
+            {
+                int EndBracket = Rest.IndexOf(']');
+                if (EndBracket < 0)
+                    return _Span.ToString();
+
+                Host = Rest[..(EndBracket + 1)];
+                _Path = Rest[(EndBracket + 1)..];
+            }
+            else
+            {
+                int HostEnd = Rest.IndexOfAny(HostEndSearchValues);
+                Host = HostEnd >= 0 ? Rest[..HostEnd] : Rest;
+                _Path = HostEnd >= 0 ? Rest[HostEnd..] : ReadOnlySpan<char>.Empty;
+            }
+
+            ReadOnlySpan<char> HostOnly = Host;
+            ReadOnlySpan<char> Port = [];
+
+            if (HostOnly.Length > 0 && HostOnly[0] != '[')
+            {
+                int EndBracket = HostOnly.IndexOf(']');
+                if (EndBracket >= 0 && EndBracket + 1 < Host.Length && Host[EndBracket + 1] == ':')
+                {
+                    HostOnly = HostOnly[..(EndBracket + 1)];
+                    Port = Host[(EndBracket + 1)..];
+                }
+            }
+            else
+            {
+                int FirstColon = HostOnly.IndexOf(':');
+                int LastColon = HostOnly.LastIndexOf(':');
+                if (FirstColon == LastColon && FirstColon > 0)
+                {
+                    HostOnly = HostOnly[..FirstColon];
+                    Port = Host[FirstColon..];
+                }
+            }
+            string NormalizedHost = NormalizeIP(HostOnly.ToString());
+            if (NormalizedHost == HostOnly.ToString())
+                return _Span.ToString();
+            StringBuilder Builder = new(_Span.Length + 8);
+            Builder.Append(Scheme);
+            Builder.Append(NormalizedHost);
+            Builder.Append(Port);
+            Builder.Append(_Path);
+
+            return Builder.ToString();
+        }
+        public static string NormalizeIP(string Host)
+        {
+            if (string.IsNullOrWhiteSpace(Host))
+                return Host;
+            string RawHost = Host;
+            if (RawHost.StartsWith('[') && RawHost.EndsWith(']'))
+                RawHost = RawHost[1..^1];
+            if ((!Host.Contains('.') && !Host.Contains(':')) || !IPAddress.TryParse(RawHost, out IPAddress? IP))
+                return Host;
+            if (IP.AddressFamily == System.Net.Sockets.AddressFamily.InterNetworkV6)
+                return $"[{IP}]";
+            return IP.ToString();
+        }
+
+        private static readonly Lazy<Dictionary<char, char>> DeceptiveCharMap = new(() => new()
+        {
+            //Cyrillic
+            ['а'] = 'a',
+            ['А'] = 'A',
+            ['В'] = 'B',
+            ['е'] = 'e',
+            ['Е'] = 'E',
+            ['к'] = 'k',
+            ['К'] = 'K',
+            ['М'] = 'M',
+            ['Н'] = 'H',
+            ['о'] = 'o',
+            ['О'] = 'O',
+            ['р'] = 'p',
+            ['Р'] = 'P',
+            ['с'] = 'c',
+            ['С'] = 'C',
+            ['Т'] = 'T',
+            ['у'] = 'y',
+            ['У'] = 'Y',
+            ['х'] = 'x',
+            ['Х'] = 'X',
+            ['ӏ'] = 'l',
+
+            ['в'] = 'b',
+            ['д'] = 'n',
+            ['л'] = 'n',
+            ['п'] = 'n',
+            ['ѕ'] = 's',
+            ['ѵ'] = 'v',
+            ['і'] = 'i',
+            ['ј'] = 'j',
+            ['ѡ'] = 'w',
+
+            //Greek
+            ['Α'] = 'A',
+            ['β'] = 'B',
+            ['Β'] = 'B',
+            ['Ε'] = 'E',
+            ['Ζ'] = 'Z',
+            ['Η'] = 'H',
+            ['Ι'] = 'I',
+            ['Κ'] = 'K',
+            ['Μ'] = 'M',
+            ['Ν'] = 'N',
+            ['Ο'] = 'O',
+            ['Ρ'] = 'P',
+            ['Τ'] = 'T',
+            ['Υ'] = 'Y',
+            ['Χ'] = 'X',
+
+            ['α'] = 'a',
+            ['ε'] = 'e',
+            ['η'] = 'n',
+            ['ι'] = 'i',
+            ['κ'] = 'k',
+            ['μ'] = 'u',
+            ['ν'] = 'v',
+            ['ο'] = 'o',
+            ['ρ'] = 'p',
+            ['τ'] = 't',
+            ['υ'] = 'u',
+            ['χ'] = 'x',
+            ['γ'] = 'y',
+            ['δ'] = 'd',
+            ['λ'] = 'l',
+            ['ξ'] = 'x',
+            ['σ'] = 'o',
+            ['ς'] = 'o',
+            ['ω'] = 'w',
+            ['ϲ'] = 'c',
+
+            ['ı'] = 'i',
+            ['ł'] = 'l',
+            ['đ'] = 'd',
+            ['ħ'] = 'h',
+            ['ŧ'] = 't',
+            ['Ɩ'] = 'l',
+            ['Ɨ'] = 'I',
+            ['Ɵ'] = 'O',
+
+            ['ℓ'] = 'l',
+            ['℮'] = 'e',
+            ['ℴ'] = 'o',
+            ['K'] = 'K',
+            ['Å'] = 'A',
+        });
+
+        /*TODO: Investigate usage of https://www.unicode.org/Public/security/8.0.0/confusables.txt
+         * https://www.unicode.org/reports/tr36/confusables.txt
+         * https://github.com/wanderingstan/Confusables
+         * https://medium.com/grindr-engineering/confusable-character-detection-in-erlang-98aa47abc9ab
+         * https://www.unicode.org/reports/tr39/
+         */
+        public static string BuildTextSkeleton(string Text)
+        {
+            Text = Text.Normalize(NormalizationForm.FormD);
+            StringBuilder Builder = new(Text.Length);
+            foreach (char _Char in Text)
+            {
+                if (CharUnicodeInfo.GetUnicodeCategory(_Char) == UnicodeCategory.NonSpacingMark)
+                    continue;
+                if (_Char <= 127)
+                    Builder.Append(_Char);
+                else if (DeceptiveCharMap.Value.TryGetValue(_Char, out char Mapped))
+                    Builder.Append(Mapped);
+                else
+                    Builder.Append(_Char);
+            }
+            return Builder.ToString();
+        }
+    }
+
+    public class Saving
+    {
+        const string KeySeparator = "<,>";
+        const string ValueSeparator = "<|>";
+        const string KeyValueSeparator = "<:>";
+        Dictionary<string, string> Data = [];
+        //Dictionary<string, object> Data = [];
+        public string SaveFolderPath;
+        public string SaveFilePath;
+
+        public Saving(string FileName, string FolderPath)
+        {
+            SaveFolderPath = FolderPath;
+            SaveFilePath = Path.Combine(SaveFolderPath, FileName);
+            Load();
+        }
+
+        public bool Has(string Key) =>
+            Data.ContainsKey(Key);
+        public void Remove(string Key) =>
+            Data.Remove(Key);
+
+        public void Set(string Key, string Value) =>
+            Data[Key] = Value;
+        public void Set(string Key, bool Value) =>
+            Data[Key] = Value.ToString();
+        public void Set(string Key, double Value) =>
+            Data[Key] = Value.ToString();
+        public void Set(string Key, int Value) =>
+            Data[Key] = Value.ToString();
+        public void Set(string Key, float Value) =>
+            Data[Key] = Value.ToString();
+        /*public void Set(string Key, object Value) =>
+            Data[Key] = Value.ToString();*/
+
+        public void Set(string Key, params string[] Items)
+        {
+            Set(Key, string.Join(ValueSeparator, Items));
+        }
+
+        /*public void Set<T>(string Key, T Value)
+        {
+            Data[Key] = Value;
+        }
+        public T Get<T>(string Key, T Default = default)
+        {
+            if (Data.TryGetValue(Key, out var Cached))
+                return (T)Cached;
+            if (Data.TryGetValue(Key, out var _String))
+            {
+                try
+                {
+                    T Value = (T)Convert.ChangeType(_String, typeof(T), CultureInfo.InvariantCulture);
+                    Data[Key] = Value;
+                    return Value;
+                }
+                catch { }
+            }
+
+            Set(Key, Default);
+            Data[Key] = Default;
+            return Default;
+        }*/
+
+        public string Get(string Key, string Default = "NOTFOUND")
+        {
+            if (Data.TryGetValue(Key, out var value))
+                return value;
+            if (Default != "NOTFOUND")
+                Set(Key, Default);
+            return Default;
+        }
+
+        public int GetInt(string Key, int Default = -1)
+        {
+            if (Data.TryGetValue(Key, out string StrValue))
+            {
+                if (int.TryParse(StrValue, out int IntValue))
+                    return IntValue;
+            }
+            if (Default != -1)
+                Set(Key, Default);
+            return Default;
+        }
+
+        public string[] Get(string Key, bool UseListParameter) =>
+            Get(Key).Split(ValueSeparator, StringSplitOptions.None);
+        public void Clear() =>
+            Data.Clear();
+        public string Save()
+        {
+            if (!Directory.Exists(SaveFolderPath))
+                Directory.CreateDirectory(SaveFolderPath);
+            if (!File.Exists(SaveFilePath))
+                File.Create(SaveFilePath).Close();
+
+            StringBuilder Builder = new StringBuilder(Data.Count * 32);
+            foreach (KeyValuePair<string, string> Entry in Data)
+                Builder.Append(Entry.Key).Append(KeyValueSeparator).Append(Entry.Value).Append(KeySeparator);
+            string Content = Builder.ToString();
+            File.WriteAllText(SaveFilePath, Content);
+            return Content;
+        }
+        public void Load()
+        {
+            if (!File.Exists(SaveFilePath))
+                return;
+            Process(File.ReadAllText(SaveFilePath));
+        }
+
+        public void Process(string Content)
+        {
+            Data.Clear();
+            if (string.IsNullOrWhiteSpace(Content))
+                return;
+            foreach (var Entry in Content.Split(KeySeparator, StringSplitOptions.RemoveEmptyEntries))
+            {
+                string[] Values = Entry.Split(KeyValueSeparator, 2, StringSplitOptions.None);
+                if (Values.Length == 2)
+                    Data[Values[0]] = Values[1];
+            }
+        }
+    }
+
+    //https://github.com/dotnet/maui/pull/9645
+    //https://github.com/MicrosoftEdge/WebView2Feedback/issues/2513
+    //https://github.com/dotnet/maui/blob/main/src/BlazorWebView/src/SharedSource/AutoCloseOnReadCompleteStream.cs
+    public class AutoDisposingStream(Stream _BaseStream) : Stream
+    {
+        private readonly Stream BaseStream = _BaseStream ?? throw new ArgumentNullException(nameof(_BaseStream));
+        private bool Disposed;
+
+        public override int Read(byte[] Buffer, int Offset, int Count)
+        {
+            if (Disposed)
+                return 0;
+            int BytesRead = BaseStream.Read(Buffer, Offset, Count);
+            if (BytesRead == 0)
+                Dispose();
+            return BytesRead;
+        }
+        public override bool CanRead => BaseStream.CanRead;
+        public override bool CanSeek => BaseStream.CanSeek;
+        public override bool CanWrite => BaseStream.CanWrite;
+        public override long Length => BaseStream.Length;
+        public override long Position
+        {
+            get => BaseStream.Position;
+            set => BaseStream.Position = value;
+        }
+        public override void Flush() => BaseStream.Flush();
+        public override long Seek(long Offset, SeekOrigin Origin) => BaseStream.Seek(Offset, Origin);
+        public override void SetLength(long Value) => BaseStream.SetLength(Value);
+        public override void Write(byte[] Buffer, int Offset, int Count) => BaseStream.Write(Buffer, Offset, Count);
+
+        protected override void Dispose(bool Disposing)
+        {
+            if (!Disposed)
+            {
+                if (Disposing)
+                    BaseStream.Dispose();
+                Disposed = true;
+            }
+            base.Dispose(Disposing);
+        }
+    }
+}

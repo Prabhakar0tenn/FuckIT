@@ -1,0 +1,62 @@
+﻿/*Copyright © SLT Softwares. All rights reserved.
+Use of this source code is governed by a GNU license that can be found in the LICENSE file.*/
+
+using System.Windows;
+using System.Windows.Media.Animation;
+
+namespace SLBr.Controls
+{
+    /// <summary>
+    /// Interaction logic for CredentialsDialog.xaml
+    /// </summary>
+    public partial class CredentialsDialogWindow : Window
+    {
+        public CredentialsDialogWindow(string Question, string Icon = "")
+        {
+            InitializeComponent();
+
+            QuestionText.Text = Question;
+            if (!string.IsNullOrEmpty(Icon))
+                QuestionIcon.Text = Icon;
+			ApplyTheme(App.Instance.CurrentTheme);
+            BeginAnimation(OpacityProperty, new DoubleAnimation
+            {
+                From = 0,
+                To = 1,
+                Duration = TimeSpan.FromSeconds(0.125)
+            });
+        }
+
+        public void ApplyTheme(Theme _Theme)
+        {
+            Resources["PrimaryBrushColor"] = _Theme.PrimaryColor;
+            Resources["SecondaryBrushColor"] = _Theme.SecondaryColor;
+            Resources["BorderBrushColor"] = _Theme.BorderColor;
+            Resources["GrayBrushColor"] = _Theme.GrayColor;
+            Resources["FontBrushColor"] = _Theme.FontColor;
+            Resources["IndicatorBrushColor"] = _Theme.IndicatorColor;
+        }
+        private async void PositiveButton_Click(object sender, RoutedEventArgs e)
+        {
+            PositiveButton.IsEnabled = false;
+            NegativeButton.IsEnabled = false;
+            BeginAnimation(OpacityProperty, new DoubleAnimation
+            {
+                From = 1,
+                To = 0,
+                Duration = TimeSpan.FromSeconds(0.125)
+            });
+            await Task.Delay(125);
+            DialogResult = true;
+        }
+
+		private void Window_ContentRendered(object sender, EventArgs e)
+		{
+			UsernameTextBox.SelectAll();
+			UsernameTextBox.Focus();
+		}
+
+        public string Username => UsernameTextBox.Text;
+        public string Password => PasswordTextBox.Password;
+    }
+}

@@ -1,0 +1,4967 @@
+﻿/*Copyright © SLT Softwares. All rights reserved.
+Use of this source code is governed by a GNU license that can be found in the LICENSE file.*/
+
+using CefSharp;
+using CefSharp.Wpf.HwndHost;
+using Microsoft.Web.WebView2.Core;
+using Microsoft.Win32;
+using SLBr.Controls;
+using SLBr.Extensions;
+using SLBr.Handlers;
+using SLBr.Managers;
+using SLBr.Protobuf;
+using SLBr.WebView;
+using System.Collections.Concurrent;
+using System.Collections.ObjectModel;
+using System.Data;
+using System.Diagnostics;
+using System.IO;
+using System.Net.Http;
+using System.Security.Cryptography;
+using System.Text;
+using System.Text.Json;
+using System.Text.RegularExpressions;
+using System.Web;
+using System.Windows;
+using System.Windows.Controls;
+using System.Windows.Controls.Primitives;
+using System.Windows.Documents;
+using System.Windows.Input;
+using System.Windows.Interop;
+using System.Windows.Media;
+using System.Windows.Media.Animation;
+using System.Windows.Media.Imaging;
+using System.Windows.Navigation;
+using System.Windows.Threading;
+using System.Xml.Linq;
+
+namespace SLBr.Pages
+{
+    /// <summary>
+    /// Interaction logic for Browser.xaml
+    /// </summary>
+    public partial class Browser : UserControl, IDisposable
+    {
+        public BrowserTabItem Tab;
+
+        public IWebView WebView;
+        public IPageOverlay? PageOverlay;
+        public UserControl? PageOverlayControl
+        {
+            get => PageOverlay as UserControl;
+        }
+
+        public bool Private = false;
+        public bool UserAgentBranding = true;
+
+        public ObservableCollection<InfoBar> LocalInfoBars = [];
+        public ObservableCollection<InfoBar> VisibleInfoBars = [];
+
+        Storyboard LoadingStoryboard;
+        public bool IsUnthemedIcon = false;
+
+        public Browser(string Url, BrowserTabItem _Tab = null, bool IsPrivate = false)
+        {
+            InitializeComponent();
+            Tab = _Tab ?? Tab.ParentWindow.GetTab(this);
+            Private = IsPrivate;
+            Address = Url;
+            SetAudioState(false);
+            DownloadsPopup.ItemsSource = App.Instance.VisibleDownloads;
+            FavouritesPanel.ItemsSource = App.Instance.FavouriteManager.Favourites;
+            FavouriteListMenu.Collection = App.Instance.FavouriteManager.Favourites;
+            HistoryListMenu.Collection = App.Instance.History;
+            InfoBarList.ItemsSource = VisibleInfoBars;
+            SetAppearance(App.Instance.CurrentTheme);
+            (BitmapSource, bool) IconData = App.Instance.GetIcon(Url, Private);
+            SetIcon(IconData.Item1, IconData.Item2);
+
+            if (!Private)
+            {
+                OmniBoxFastTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(200) };
+                OmniBoxSmartTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(500) };
+                OmniBoxFastTimer.Tick += OmniBoxFastTimer_Tick;
+                OmniBoxSmartTimer.Tick += OmniBoxSmartTimer_Tick;
+            }
+            LoadingStoryboard = SiteInformationIcon.FindResource("LoadingAnimation") as Storyboard;
+            SiteInformationText.Text = "Loading";
+            LoadingStoryboard?.Begin();
+            TranslateComboBox.ItemsSource = App.Instance.LocaleNames;
+            TranslateComboBox.SelectedValue = App.Instance.Locale.Name;
+            LocalInfoBars.CollectionChanged += LocalInfoBars_CollectionChanged;
+            SyncInfobars();
+            switch (App.Instance.GlobalSave.GetInt("TranslationProvider"))
+            {
+                case 0:
+                    TranslateAttribution.Inlines.Add("Google Translate");
+                    TranslateAttribution.NavigateUri = new Uri("https://translate.google.com/");
+                    break;
+                case 1:
+                    TranslateAttribution.Inlines.Add("Microsoft Translate");
+                    TranslateAttribution.NavigateUri = new Uri("https://learn.microsoft.com/en-us/azure/ai-services/translator/");
+                    break;
+                case 2:
+                    TranslateAttribution.Inlines.Add("Yandex Translate");
+                    TranslateAttribution.NavigateUri = new Uri("https://yandex.cloud/en/services/translate");
+                    break;
+                case 3:
+                    TranslateAttribution.Inlines.Add("Lingvanex");
+                    TranslateAttribution.NavigateUri = new Uri("https://lingvanex.com/products/translationapi/");
+                    break;
+            }
+            FindPopup.CustomPopupPlacementCallback = new CustomPopupPlacementCallback(FindPopupPlacement);
+            StatusBubblePopup.CustomPopupPlacementCallback = new CustomPopupPlacementCallback(StatusBubblePopupPlacement);
+        }
+
+        private void Hyperlink_RequestNavigate(object sender, RequestNavigateEventArgs e)
+        {
+            Tab.ParentWindow.NewTab(e.Uri.ToString(), true, Tab.ParentWindow.TabsUI.SelectedIndex + 1, Private, Tab.TabGroup);
+            e.Handled = true;
+        }
+
+        private void LocalInfoBars_CollectionChanged(object? sender, System.Collections.Specialized.NotifyCollectionChangedEventArgs e)
+        {
+            SyncInfobars();
+        }
+
+        public void SyncInfobars()
+        {
+            VisibleInfoBars.Clear();
+            foreach (InfoBar Bar in App.Instance.InfoBars)
+                VisibleInfoBars.Add(Bar);
+            foreach (InfoBar Bar in LocalInfoBars)
+                VisibleInfoBars.Add(Bar);
+        }
+
+        public void InitializeBrowserComponent()
+        {
+            Tab.SubIcon = null;
+            Tab.SubIconForeground = null;
+            if (WebView == null)
+                CreateWebView([new(true, Address)], (WebEngineType)App.Instance.GlobalSave.GetInt("WebEngine"));
+            else
+                BrowserLoadChanged(Address);
+        }
+
+        TextBox OmniTextBox;
+        Popup OmniBoxPopup;
+        Grid OmniBoxPopupDropDown;
+        bool AudioPlaying = false;
+
+        private void WebView_AudioPlayingChanged(object? sender, EventArgs e)
+        {
+            SetAudioState(WebView.AudioPlaying);
+        }
+
+        public void SetAudioState(bool? _AudioPlaying = false)
+        {
+            if (_AudioPlaying != null)
+                AudioPlaying = _AudioPlaying.Value;
+            /*TODO: Brainstorm & implement additional indicator uses.
+            * Unloaded tab: Replace leaf icon.
+            * Web risk.
+            * Private tab.
+            * Loading state.
+            */
+            Tab.SubIcon = AudioPlaying ? (Muted ? "\ue74f" : "\ue767") : null;
+            Tab.SubIconForeground = null;
+            if (bool.Parse(App.Instance.GlobalSave.Get("ShowUnloadProgress")))
+                Tab.ProgressBarVisibility = (Muted || !AudioPlaying) ? Visibility.Visible : Visibility.Collapsed;
+            else
+                Tab.ProgressBarVisibility = Visibility.Collapsed;
+        }
+
+        public void Favourites_CollectionChanged()
+        {
+            SetFavouritesBarVisibility();
+            if (App.Instance.FavouriteManager.Contains(Address) != null)
+            {
+                FavouriteButton.Content = "\xEB52";
+                FavouriteButton.Foreground = App.Instance.FavouriteColor;
+                FavouriteButton.ToolTip = "Remove from favourites";
+                Tab.FavouriteCommandHeader = "Remove from favourites";
+            }
+            else
+            {
+                FavouriteButton.Content = "\xEB51";
+                FavouriteButton.Foreground = (SolidColorBrush)FindResource("FontBrush");
+                FavouriteButton.ToolTip = "Add to favourites";
+                Tab.FavouriteCommandHeader = "Add to favourites";
+            }
+        }
+
+        public void UpdateSLBr(object sender, RoutedEventArgs e)
+        {
+            App.Instance.ShowUpdateInfoBar();
+        }
+
+        public void ButtonAction(object sender, RoutedEventArgs e)
+        {
+            string[] Values = ((FrameworkElement)sender).Tag.ToString().Split("<,>");
+            Action((Actions)int.Parse(Values[0]), (Values.Length > 1) ? Values[1] : string.Empty, (Values.Length > 2) ? Values[2] : string.Empty, (Values.Length > 3) ? Values[3] : string.Empty);
+        }
+        public void Action(Actions _Action, string V1 = "", string V2 = "", string V3 = "")
+        {
+            V1 = V1.Replace("{CurrentUrl}", Address).Replace("{Homepage}", App.Instance.GlobalSave.Get("Homepage"));
+
+            switch (_Action)
+            {
+                case Actions.Exit:
+                    App.Instance.CloseSLBr(true);
+                    break;
+                case Actions.Undo:
+                    Back();
+                    break;
+                case Actions.Redo:
+                    Forward();
+                    break;
+                case Actions.Refresh:
+                    Refresh();
+                    break;
+                case Actions.HardRefresh:
+                    Refresh(true);
+                    break;
+                case Actions.ClearCacheHardRefresh:
+                    Refresh(true, true);
+                    break;
+                case Actions.Navigate:
+                    Navigate(V1);
+                    break;
+                case Actions.Share:
+                    Share();
+                    break;
+
+                case Actions.CreateTab:
+                    if (V2 == "Tab")
+                    {
+                        BrowserTabItem _Tab = Tab.ParentWindow.GetBrowserTabWithId(int.Parse(V1));
+                        Tab.ParentWindow.NewTab(_Tab.Content.Address, true, Tab.ParentWindow.Tabs.IndexOf(_Tab) + 1, Private, _Tab.TabGroup);
+                    }
+                    else if (V2 == "Private")
+                        Tab.ParentWindow.NewTab(V1, true, -1, true);
+                    else
+                        Tab.ParentWindow.NewTab(V1, true);
+                    break;
+                case Actions.CloseTab:
+                    Tab.ParentWindow.CloseTab(int.Parse(V1), int.Parse(V2));
+                    break;
+                case Actions.NewWindow:
+                    App.Instance.NewWindow();
+                    break;
+
+                case Actions.DevTools:
+                    DevTools();
+                    break;
+                case Actions.SizeEmulator:
+                    SizeEmulator();
+                    break;
+                case Actions.SetSideBarDock:
+                    SetSideBarDock(int.Parse(V1));
+                    break;
+                case Actions.Favourite:
+                    //if (string.IsNullOrEmpty(V1))
+                    FavouriteAction();
+                    /*else
+                        FavouriteAction(V1 == "1");*/
+                    break;
+                case Actions.FavouriteFolder:
+                    App.Instance.NewFavouriteFolder();
+                    break;
+                case Actions.OpenFileExplorer:
+                    Utils.OpenFileExplorer(V1);
+                    break;
+                case Actions.OpenAsPopupBrowser:
+                    OpenAsPopupBrowser(V1);
+                    break;
+                case Actions.SwitchUserPopup:
+                    App.Instance.SwitchUserPopup();
+                    break;
+                case Actions.ReaderMode:
+                    ToggleReaderMode();
+                    break;
+
+                case Actions.CloseSideBar:
+                    ToggleSideBar(true);
+                    break;
+                case Actions.NewsFeed:
+                    NewsFeed();
+                    break;
+
+                case Actions.Print:
+                    WebView?.Print();
+                    break;
+                case Actions.Mute:
+                    ToggleMute();
+                    break;
+                case Actions.Find:
+                    Find(string.Empty);
+                    break;
+
+                /*case Actions.ZoomIn:
+                    Zoom(1);
+                    break;
+                case Actions.ZoomOut:
+                    Zoom(-1);
+                    break;
+                case Actions.ZoomReset:
+                    Zoom(0);
+                    break;*/
+                case Actions.InstallWebApp:
+                    Dispatcher.Invoke(async () =>
+                    {
+                        if (App.Instance.AvailableWebAppManifests.ContainsKey(CurrentWebAppManifestUrl))
+                            CurrentWebAppManifest = App.Instance.AvailableWebAppManifests.GetValueOrDefault(CurrentWebAppManifestUrl);
+                        else
+                        {
+                            CurrentWebAppManifest = await WebAppHandler.FetchManifestAsync(Address, CurrentWebAppManifestUrl);
+                            if (CurrentWebAppManifest != null)
+                                App.Instance.AvailableWebAppManifests[CurrentWebAppManifestUrl] = CurrentWebAppManifest;
+                        }
+                        if (CurrentWebAppManifest != null)
+                        {
+                            InformationDialogWindow InfoWindow = new("Confirmation", $"Install \"{CurrentWebAppManifest.ShortName ?? CurrentWebAppManifest.Name}\" Web App", "This site can be installed as an application.", "\ueb3b", "Install", "Cancel")
+                            {
+                                Topmost = true
+                            };
+                            if (InfoWindow.ShowDialog() == true)
+                                await WebAppHandler.Install(CurrentWebAppManifest);
+                        }
+                    });
+                    break;
+                case Actions.QR:
+                    if (V1 == "0")
+                    {
+                        if (Address.Length > 2000)
+                        {
+                            QRImageContainer.Visibility = Visibility.Collapsed;
+                            QRCharacterLimit.Visibility = Visibility.Visible;
+                            QRCopyButton.IsEnabled = false;
+                            QRDownloadButton.IsEnabled = false;
+                            QRImage.Source = null;
+                        }
+                        else
+                        {
+                            QRImageContainer.Visibility = Visibility.Visible;
+                            QRCharacterLimit.Visibility = Visibility.Collapsed;
+                            QRCopyButton.IsEnabled = true;
+                            QRDownloadButton.IsEnabled = true;
+                            try
+                            {
+                                QRBitmap ??= new QRSaveBitmapImage(App.MiniQREncoder.Encode(Address)) { ModuleSize = 5, QuietZone = 10 }.CreateQRCodeBitmap();
+                                QRImage.Source = QRBitmap;
+                            }
+                            catch { }
+                        }
+                        QRButton.OpenPopup();
+                    }
+                    else if (V1 == "1")
+                    {
+                        if (QRBitmap != null)
+                            App.Instance.CopyToClipboard(QRBitmap, 1);
+                    }
+                    else
+                    {
+                        if (QRBitmap != null)
+                        {
+                            try
+                            {
+                                using MemoryStream _Stream = new();
+                                string FileExtension;
+                                string Filter;
+                                if (App.Instance.GlobalSave.GetInt("ScreenshotFormat") == 1)
+                                {
+                                    PngBitmapEncoder PNGEncoder = new();
+                                    PNGEncoder.Frames.Add(BitmapFrame.Create(QRBitmap));
+                                    PNGEncoder.Save(_Stream);
+                                    FileExtension = "png";
+                                    Filter = "PNG Image (*.png)|*.png";
+                                }
+                                else
+                                {
+                                    JpegBitmapEncoder JpegEncoder = new();
+                                    JpegEncoder.Frames.Add(BitmapFrame.Create(QRBitmap));
+                                    JpegEncoder.Save(_Stream);
+                                    FileExtension = "jpeg";
+                                    Filter = "JPEG Image (*.jpeg)|*.jpeg";
+                                }
+                                WebViewManager.DownloadManager.WriteDownload(_Stream.ToArray(), Path.Combine(WebViewManager.RuntimeSettings.DownloadFolderPath, $"qrcode_{Utils.SanitizeFileName(Address)}.{FileExtension}"), WebViewManager.RuntimeSettings.DownloadPrompt, Filter);
+                            }
+                            catch { }
+                        }
+                    }
+                    break;
+                case Actions.SwitchWebEngine:
+                    App.Instance.Dispatcher.Invoke(async () =>
+                    {
+                        switch (V1)
+                        {
+                            case "0":
+                                if (WebView?.Engine == WebEngineType.Chromium)
+                                {
+                                    InformationDialogWindow InfoWindow = new("Information", "Already using Chromium web engine", "This tab is already running with the Chromium web engine. No changes are necessary.");
+                                    InfoWindow.ShowDialog();
+                                    break;
+                                }
+                                List<WebNavigationEntry> ChromiumHistory = await WebView?.GetNavigationHistoryAsync() ?? [new(true, Address)];
+                                //MessageBox.Show(JsonSerializer.Serialize(ChromiumHistory));
+                                DisposeBrowserCore();
+                                CreateWebView(ChromiumHistory, WebEngineType.Chromium);
+                                Tab.ParentWindow.OpenToast("Web engine switched", "\xec6c");
+                                break;
+                            case "1":
+                                if (WebView?.Engine == WebEngineType.ChromiumEdge)
+                                {
+                                    InformationDialogWindow InfoWindow = new("Information", "Already using Edge web engine", "This tab is already running with the Edge web engine. No changes are necessary.");
+                                    InfoWindow.ShowDialog();
+                                    break;
+                                }
+                                string? AvailableVersion = null;
+                                try
+                                {
+                                    AvailableVersion = CoreWebView2Environment.GetAvailableBrowserVersionString();
+                                }
+                                catch (WebView2RuntimeNotFoundException)
+                                {
+                                    InformationDialogWindow InfoWindow = new("Error", "WebView2 Runtime Unavailable", "Microsoft Edge WebView2 Runtime is not installed on your device.", "\ue7f9", "Download", "Cancel")
+                                    {
+                                        Topmost = true
+                                    };
+                                    if (InfoWindow.ShowDialog() == true)
+                                        Tab.ParentWindow.NewTab("https://developer.microsoft.com/en-us/microsoft-edge/webview2/consumer/", true, Tab.ParentWindow.TabsUI.SelectedIndex + 1, bool.Parse(App.Instance.GlobalSave.Get("PrivateTabs")));
+                                    break;
+                                }
+                                List<WebNavigationEntry> EdgeHistory = await WebView?.GetNavigationHistoryAsync() ?? [new(true, Address)];
+                                //MessageBox.Show(JsonSerializer.Serialize(EdgeHistory));
+                                DisposeBrowserCore();
+                                CreateWebView(EdgeHistory, WebEngineType.ChromiumEdge);
+                                Tab.ParentWindow.OpenToast("Web engine switched", "\xec6c");
+                                break;
+                            case "2":
+                                if (WebView?.Engine == WebEngineType.Trident)
+                                {
+                                    InformationDialogWindow InfoWindow = new("Information", "Already using Trident web engine", "This tab is already running with the Trident web engine. No changes are necessary.");
+                                    InfoWindow.ShowDialog();
+                                    break;
+                                }
+                                List<WebNavigationEntry> TridentHistory = await WebView?.GetNavigationHistoryAsync() ?? [new(true, Address)];
+                                DisposeBrowserCore();
+                                CreateWebView(TridentHistory, WebEngineType.Trident);
+                                Tab.ParentWindow.OpenToast("Web engine switched", "\xec6c");
+                                break;
+                            case "-1":
+                                WebEngineType Engine = (WebEngineType)App.Instance.GlobalSave.GetInt("WebEngine");
+                                if (WebView?.Engine == Engine)
+                                    break;
+                                List<WebNavigationEntry> DefaultHistory = await WebView?.GetNavigationHistoryAsync() ?? [new(true, Address)];
+                                DisposeBrowserCore();
+                                CreateWebView(DefaultHistory, Engine);
+                                Tab.ParentWindow.OpenToast("Web engine switched", "\xec6c");
+                                break;
+                        }
+                    });
+                    break;
+                case Actions.Translate:
+                    Translate(V1 == "1");
+                    break;
+                case Actions.TaskManager:
+                    WebView?.OpenTaskManager();
+                    break;
+                case Actions.CreateGroup:
+                    Tab.ParentWindow.CreateGroup();
+                    break;
+            }
+        }
+        public WriteableBitmap? QRBitmap = null;
+
+        bool InitializingWebView;
+
+        async void CreateWebView(List<WebNavigationEntry> History, WebEngineType Engine)
+        {
+            if (WebView != null || InitializingWebView)
+                return;
+            InitializingWebView = true;
+            Address = History.FirstOrDefault(i => i.IsCurrent).Url;
+            Tab.IsUnloaded = true;
+            Tab.ProgressBarVisibility = Visibility.Collapsed;
+            BrowserLoadChanged(Address, true, null);
+            switch (Engine)
+            {
+                case WebEngineType.Chromium:
+                    WebEngineButtonIcon.Text = "\x2600";
+                    break;
+                case WebEngineType.ChromiumEdge:
+                    WebEngineButtonIcon.Text = "\x2601";
+                    break;
+                case WebEngineType.Trident:
+                    WebEngineButtonIcon.Text = "\x2602";
+                    break;
+            }
+
+            WebViewBrowserSettings WebViewSettings = new()
+            {
+                Private = Private,
+                AudioListener = !App.Instance.LiteMode
+            };
+
+            if (EngineInitializationInfoBar == null)
+            {
+                EngineInitializationInfoBar = new()
+                {
+                    Icon = "\xec6c",
+                    Title = "Initializing Web Engine",
+                    IsClosable = false,
+                    Description = [new() { Text = "Configuring the underlying browser engine components." }]
+                };
+                LocalInfoBars.Add(EngineInitializationInfoBar);
+            }
+            //TODO: Improve tab session file with firefox sessionstore JSON format.
+            //WebView = await WebViewManager.Create(WebEngineType.Chromium, [new(false, "slbr://newtab"), new(false, "https://google.com"), new(false, "https://apple.com"), new(false, "https://microsoft.com"), new(false, "https://github.com"), new(false, "https://youtube.com"), new(false, "https://yandex.com"), new(false, "slbr://settings/user"), new(true, "https://microsoft.com")], WebViewSettings);
+            WebView = await WebViewManager.Create(Engine, History, WebViewSettings);
+            CloseInfoBar(EngineInitializationInfoBar);
+
+            WebView?.Control.AllowDrop = true;
+            WebView?.Control.IsManipulationEnabled = true;
+            WebView?.Control.UseLayoutRounding = true;
+
+            WebView?.IsBrowserInitializedChanged += WebView_IsBrowserInitializedChanged;
+            //WebView?.Control.PreviewMouseWheel += Chromium_PreviewMouseWheel;
+
+            WebView?.FaviconChanged += WebView_FaviconChanged;
+            WebView?.AuthenticationRequested += WebView_AuthenticationRequested;
+            WebView?.BeforeNavigation += WebView_BeforeNavigation;
+            WebView?.ContextMenuRequested += WebView_ContextMenuRequested;
+            WebView?.ExternalProtocolRequested += WebView_ExternalProtocolRequested;
+            //WebView?.FindResult += WebView_FindResult;
+            WebView?.FrameLoadStart += WebView_FrameLoadStart;
+            WebView?.FullscreenChanged += WebView_FullscreenChanged;
+            WebView?.AddressChanged += WebView_AddressChanged;
+            WebView?.JavaScriptMessageReceived += WebView_JavaScriptMessageReceived;
+            WebView?.LoadingStateChanged += WebView_LoadingStateChanged;
+            WebView?.NavigationError += WebView_NavigationError;
+            WebView?.NewTabRequested += WebView_NewTabRequested;
+            WebView?.PermissionRequested += WebView_PermissionRequested;
+            WebView?.ResourceLoaded += WebView_ResourceLoaded;
+            //WebView?.ResponseIntercepted += WebView_ResponseIntercepted;
+            WebView?.ResourceRequested += WebView_ResourceRequested;
+            //WebView?.ResourceResponded += WebView_ResourceResponded;
+            WebView?.ScriptDialogOpened += WebView_ScriptDialogOpened;
+            WebView?.StatusMessage += WebView_StatusMessage;
+            WebView?.TitleChanged += WebView_TitleChanged;
+            WebView?.AudioPlayingChanged += WebView_AudioPlayingChanged;
+            /*WebView.AddressChanged += (s, e) => Debug.WriteLine("WebView: AddressChanged");
+            WebView.FaviconChanged += (s, e) => Debug.WriteLine("WebView: FaviconChanged");
+            WebView.AuthenticationRequested += (s, e) => Debug.WriteLine("WebView: AuthenticationRequested");
+            WebView.BeforeNavigation += (s, e) => Debug.WriteLine("WebView: BeforeNavigation");
+            WebView.ContextMenuRequested += (s, e) => Debug.WriteLine("WebView: ContextMenuRequested");
+            WebView.ExternalProtocolRequested += (s, e) => Debug.WriteLine("WebView: ExternalProtocolRequested");
+            WebView.FrameLoadStart += (s, e) => Debug.WriteLine("WebView: FrameLoadStart");
+            WebView.FullscreenChanged += (s, e) => Debug.WriteLine("WebView: FullscreenChanged");
+            WebView.JavaScriptMessageReceived += (s, e) => Debug.WriteLine("WebView: JavaScriptMessageReceived");
+            WebView.LoadingStateChanged += (s, e) => Debug.WriteLine("WebView: LoadingStateChanged");
+            WebView.NavigationError += (s, e) => Debug.WriteLine("WebView: NavigationError");
+            WebView.NewTabRequested += (s, e) => Debug.WriteLine("WebView: NewTabRequested");
+            WebView.PermissionRequested += (s, e) => Debug.WriteLine("WebView: PermissionRequested");
+            WebView.ResourceLoaded += (s, e) => Debug.WriteLine("WebView: ResourceLoaded");
+            WebView.ResponseIntercepted += (s, e) => Debug.WriteLine("WebView: ResponseIntercepted");
+            WebView.ResourceRequested += (s, e) => Debug.WriteLine("WebView: ResourceRequested");
+            WebView.ScriptDialogOpened += (s, e) => Debug.WriteLine("WebView: ScriptDialogOpened");
+            WebView.StatusMessage += (s, e) => Debug.WriteLine("WebView: StatusMessage");
+            WebView.TitleChanged += (s, e) => Debug.WriteLine("WebView: TitleChanged");
+            WebView.AudioPlayingChanged += (s, e) => Debug.WriteLine("WebView: AudioPlayingChanged");*/
+
+            CoreContainer.Visibility = Visibility.Collapsed;
+            CoreContainer.Children.Add(WebView?.Control);
+            ExtensionsMenu.ItemsSource = App.Instance.ExtensionManager.GetExtensions(Engine);
+            //Chromium.Visibility = Visibility.Collapsed;//VIDEO
+
+            /*Tab.ParentWindow.WindowState = WindowState.Normal;//VIDEO
+            Tab.ParentWindow.WindowStyle = WindowStyle.None;//VIDEO
+            Tab.ParentWindow.WindowState = WindowState.Maximized;//VIDEO*/
+            InitializingWebView = false;
+        }
+
+        private void WebView_AddressChanged(object? sender, string e)
+        {
+            Tab.Preview = null;
+        }
+
+        private async void WebView_IsBrowserInitializedChanged(object? sender, EventArgs e)
+        {
+            if (WebView != null && WebView.IsBrowserInitialized)
+            {
+                CoreContainer.Visibility = Visibility.Visible;
+                Tab.IsUnloaded = false;
+                if (bool.Parse(App.Instance.GlobalSave.Get("ShowUnloadProgress")))
+                    Tab.ProgressBarVisibility = Visibility.Visible;
+                if (bool.Parse(App.Instance.GlobalSave.Get("NetworkLimit")))
+                {
+                    float Bandwidth = float.Parse(App.Instance.GlobalSave.Get("Bandwidth"));
+                    LimitNetwork(0, Bandwidth, Bandwidth);
+                }
+                //TODO: Apply UA branding on Edge & Trident web views.
+                UserAgentBranding = !Private && WebView.Engine == WebEngineType.Chromium;
+                if (UserAgentBranding)
+                {
+                    await WebView?.CallDevToolsAsync("Emulation.setUserAgentOverride", new
+                    {
+                        userAgent = App.Instance.UserAgent,
+                        userAgentMetadata = App.Instance.UserAgentData
+                    });
+                    await WebView?.CallDevToolsAsync("Network.setUserAgentOverride", new
+                    {
+                        userAgent = App.Instance.UserAgent,
+                        userAgentMetadata = App.Instance.UserAgentData
+                    });
+                }
+                if (App.Instance.LiteMode)
+                {
+                    await WebView?.CallDevToolsAsync("Emulation.setDataSaverOverride", new
+                    {
+                        dataSaverEnabled = true
+                    });
+                }
+                //TODO: WebView2 site certificate.
+                /*WebView.CallDevToolsAsync("Security.enable");
+                WebView.SubscribeDevToolsEvent("Security.visibleSecurityStateChanged", Json =>
+                {
+                    Debug.WriteLine($"Security: {Json}");
+                });*/
+            }
+        }
+
+        private void WebView_TitleChanged(object? sender, string e)
+        {
+            Tab.Header = e;
+            if (Tab == Tab.ParentWindow.GetTab())
+                Title = e + " - SLBr";
+            if (App.Instance.ModernURL && App.Instance.TrimURL && OmniBox.Text == OmniBox.Tag.ToString())
+                SetOverlayDisplay(App.Instance.TrimURL, App.Instance.HomographProtection);
+        }
+
+        public void WebView_StatusMessage(object? sender, string e)
+        {
+            if (string.IsNullOrEmpty(e))
+                StatusBubblePopup.IsOpen = false;
+            else
+            {
+                StatusMessage.Text = e;
+                StatusBubblePopup.IsOpen = true;
+            }
+        }
+
+        private void WebView_ScriptDialogOpened(object? sender, ScriptDialogEventArgs e)
+        {
+            Window? OpenedWindow = null;
+            try
+            {
+                if (e.DialogType == ScriptDialogType.Alert)
+                {
+                    InformationDialogWindow InfoWindow = new("Alert", $"{Utils.Host(e.Url)}", e.Text)
+                    {
+                        Topmost = true
+                    };
+                    OpenedWindow = InfoWindow;
+                    e.Handled = true;
+                    e.Result = InfoWindow.ShowDialog() == true;
+                }
+                else if (e.DialogType == ScriptDialogType.Confirm)
+                {
+                    InformationDialogWindow InfoWindow = new("Confirmation", $"{Utils.Host(e.Url)}", e.Text, string.Empty, "OK", "Cancel")
+                    {
+                        Topmost = true
+                    };
+                    OpenedWindow = InfoWindow;
+                    e.Handled = true;
+                    e.Result = InfoWindow.ShowDialog() == true;
+                }
+                else if (e.DialogType == ScriptDialogType.Prompt)
+                {
+                    DynamicDialogWindow _DynamicDialogWindow = new("Prompt", Utils.Host(e.Url),
+                    [
+                        new() { Name = e.Text, IsRequired = false, Type = DialogInputType.Text, Value = e.DefaultPrompt }
+                        ],
+                        "\ue946"
+                    )
+                    {
+                        Topmost = true
+                    };
+                    OpenedWindow = _DynamicDialogWindow;
+                    e.Handled = true;
+                    if (_DynamicDialogWindow.ShowDialog() == true)
+                    {
+                        e.PromptResult = _DynamicDialogWindow.InputFields[0].Value;
+                        e.Result = true;
+                    }
+                    else
+                        e.Result = false;
+                }
+                else if (e.DialogType == ScriptDialogType.BeforeUnload)
+                {
+                    InformationDialogWindow InfoWindow = new("Warning", e.IsReload ? "Reload site?" : "Leave site?", "You may lose unsaved changes. Do you want to continue?", string.Empty, e.IsReload ? "Reload" : "Leave", "Cancel")
+                    {
+                        Topmost = true
+                    };
+                    OpenedWindow = InfoWindow;
+                    e.Handled = true;
+                    e.Result = InfoWindow.ShowDialog() == true;
+                }
+            }
+            catch
+            {
+                OpenedWindow?.Close();
+                e.Handled = true;
+                e.Result = false;
+            }
+        }
+
+        public ConcurrentDictionary<string, bool> HostCache = new(StringComparer.Ordinal);
+
+        public long Image_Budget = 2 * 1024 * 1024;
+        public long Stylesheet_Budget = 400 * 1024;
+        public long Script_Budget = 500 * 1024;
+        public long Font_Budget = 300 * 1024;
+        public long Frame_Budget = 5;
+
+        public void ResetBudgets()
+        {
+            Image_Budget = 2 * 1024 * 1024;
+            Stylesheet_Budget = 400 * 1024;
+            Script_Budget = 500 * 1024;
+            Font_Budget = 300 * 1024;
+            Frame_Budget = 5;
+        }
+
+        public bool IsOverBudget(ResourceRequestType _ResourceType)
+        {
+            switch (_ResourceType)
+            {
+                case ResourceRequestType.Image:
+                    return Image_Budget <= 0;
+                case ResourceRequestType.Stylesheet:
+                    return Stylesheet_Budget <= 0;
+                case ResourceRequestType.Script:
+                    return Script_Budget <= 0;
+                case ResourceRequestType.Font:
+                    return Font_Budget <= 0;
+                case ResourceRequestType.SubFrame:
+                    return Frame_Budget <= 0;
+                default:
+                    return false;
+            }
+        }
+
+        public void DeductFromBudget(ResourceRequestType _ResourceType, long DataLength)
+        {
+            switch (_ResourceType)
+            {
+                case ResourceRequestType.Image:
+                    Image_Budget -= DataLength;
+                    return;
+                case ResourceRequestType.Stylesheet:
+                    Stylesheet_Budget -= DataLength;
+                    return;
+                case ResourceRequestType.Script:
+                    Script_Budget -= DataLength;
+                    return;
+                case ResourceRequestType.Font:
+                    Font_Budget -= DataLength;
+                    return;
+                case ResourceRequestType.SubFrame:
+                    Frame_Budget -= DataLength;
+                    return;
+                default:
+                    break;
+            }
+        }
+
+        private void WebView_ResourceRequested(object? sender, ResourceRequestEventArgs e)
+        {
+            if (!Utils.IsHttpScheme(e.Url))
+            {
+                e.Cancel = false;
+                return;
+            }
+            if (!App.Instance.ExternalFonts && e.ResourceRequestType == ResourceRequestType.Font)
+            {
+                e.Cancel = true;
+                return;
+            }
+            if (App.Instance.NeverSlowMode)
+            {
+                if (IsOverBudget(e.ResourceRequestType))
+                {
+                    e.Cancel = true;
+                    return;
+                }
+                foreach (string Pattern in App.FailedScripts)
+                {
+                    if (e.Url.Contains(Pattern))
+                    {
+                        e.Cancel = true;
+                        return;
+                    }
+                }
+            }
+            if (App.Instance.AdBlock == 1)
+            {
+                if (App.Instance._AdBlockHandler.ShouldBlockRequest(e.Url, e.FocusedUrl, e.ResourceRequestType))
+                {
+                    e.Cancel = true;
+                    return;
+                }
+            }
+
+            //Proof of concept.
+            //https://github.com/users/SLT-World/projects/2/views/2?pane=issue&itemId=159222997
+            //TODO: Inject styling, refer to SLChat markdown implementation.
+            //if (e.Url.Contains("developers.cloudflare.com/fundamentals/reference/markdown-for-agents"))
+            //{
+            //    var AcceptHeaders = e.Headers.TryGetValue("Accept", out var Value) ? Value : "*/*";
+            //    e.ModifiedHeaders["Accept"] = $"text/markdown,{AcceptHeaders}";
+            //}
+
+            if (App.Instance.LiteMode)
+                e.ModifiedHeaders["Save-Data"] = "on";
+            if (UserAgentBranding)
+            {
+                e.ModifiedHeaders["User-Agent"] = App.Instance.UserAgent;
+                e.ModifiedHeaders["Sec-Ch-Ua"] = App.Instance.UserAgentBrandsString;
+            }
+
+            if (e.Url.StartsWith("https://addons.mozilla.org/en-US/firefox/addon/"))
+                e.ModifiedHeaders["User-Agent"] = App.Instance.FirefoxUserAgent;
+            if (ProprietaryCodecsInfoBar == null && WebView.Engine == WebEngineType.Chromium && e.ResourceRequestType == ResourceRequestType.Media && Utils.IsProprietaryCodec(Utils.GetFileExtension(e.Url)))
+            {
+                if (bool.Parse(App.Instance.GlobalSave.Get("WarnCodec")))
+                {
+                    Dispatcher.BeginInvoke(() =>
+                    {
+                        ProprietaryCodecsInfoBar = new()
+                        {
+                            Icon = "\xea69",
+                            Title = "Proprietary Codecs Detected",
+                            Description = [new() { Text = "This site is trying to play media using formats not supported by Chromium (CEF). Do you want to switch to the Edge (WebView2) engine?" }],
+                            Actions = [
+                                new() { Text = "Switch", Background = (SolidColorBrush)FindResource("IndicatorBrush"), Foreground = App.Instance.WhiteColor, Command = new RelayCommand(() => { CloseInfoBar(ProprietaryCodecsInfoBar); Action(Actions.SwitchWebEngine, "1"); }) },
+                                new() { Text = "Do not ask again", Command = new RelayCommand(async () => { CloseInfoBar(WaybackInfoBar); App.Instance.GlobalSave.Set("WarnCodec", false); }) }
+                            ]
+                        };
+                        LocalInfoBars.Add(ProprietaryCodecsInfoBar);
+                    });
+                }
+            }
+        }
+
+        private void WebView_ResourceLoaded(object? sender, ResourceLoadedResult e)
+        {
+            if (App.Instance.NeverSlowMode)
+            {
+                if (e.Success)
+                    DeductFromBudget(e.ResourceRequestType, e.ReceivedContentLength);
+                else// if (status == UrlRequestStatus.Failed)
+                {
+                    if (e.ResourceRequestType != ResourceRequestType.Script)
+                        return;
+                    App.FailedScripts.Add(Utils.CleanUrl(e.Url, true, true, true, true, true));
+                }
+            }
+        }
+
+        private void WebView_BeforeNavigation(object? sender, BeforeNavigationEventArgs e)
+        {
+            if (e.IsMainFrame)
+            {
+                if (WebView.Engine == WebEngineType.Chromium && !WebViewManager.OverrideRequests.ContainsKey(e.Url))
+                {
+                    if (Utils.IsHttpScheme(e.Url))
+                    {
+                        if (!Private && App.Instance.WebRiskService != WebSecurityService.None && Utils.GetFileExtension(e.Url) != ".pdf")
+                        {
+                            //TODO: Async & CancellationToken.
+                            ThreatType _ThreatType = App.Instance._WebRiskHandler.IsSafe(e.Url, App.Instance.WebRiskService);
+                            if (_ThreatType is ThreatType.Malware or ThreatType.Potentially_Harmful_Application)
+                                WebViewManager.RegisterOverrideRequest(e.Url, ResourceHandler.GetByteArray(string.Format(App.WebRiskInterstitialPage, "The site may install harmful and malicious software that manipulates or steals personal information."), Encoding.UTF8), "text/html", -1, (int)_ThreatType);
+                            else if (_ThreatType == ThreatType.Social_Engineering)
+                                WebViewManager.RegisterOverrideRequest(e.Url, ResourceHandler.GetByteArray(string.Format(App.WebRiskInterstitialPage, "The site may contain deceptive content that tricks you into installing software or revealing personal information."), Encoding.UTF8), "text/html", -1, (int)_ThreatType);
+                            else if (_ThreatType == ThreatType.Unwanted_Software)
+                                WebViewManager.RegisterOverrideRequest(e.Url, ResourceHandler.GetByteArray(string.Format(App.WebRiskInterstitialPage, "The site may install harmful software that alters your browser settings or displays unwanted advertisements."), Encoding.UTF8), "text/html", -1, (int)_ThreatType);
+                            else if (_ThreatType == ThreatType.Trick_To_Bill)
+                                WebViewManager.RegisterOverrideRequest(e.Url, ResourceHandler.GetByteArray(App.WebRiskBillingInterstitialPage, Encoding.UTF8), "text/html", -1, (int)_ThreatType);
+                        }
+                    }
+                    else if (e.Url.StartsWith("chrome:"))
+                    {
+                        //https://source.chromium.org/chromium/chromium/src/+/main:ios/chrome/browser/shared/model/url/chrome_url_constants.cc
+                        ReadOnlySpan<char> Sub = e.Url.AsSpan()[9..];
+                        if (Sub.StartsWith("settings", StringComparison.OrdinalIgnoreCase) ||
+                            Sub.StartsWith("history", StringComparison.OrdinalIgnoreCase) ||
+                            Sub.StartsWith("downloads", StringComparison.OrdinalIgnoreCase) ||
+                            Sub.StartsWith("flags", StringComparison.OrdinalIgnoreCase) ||
+                            Sub.StartsWith("new-tab-page", StringComparison.OrdinalIgnoreCase) ||
+                            Sub.StartsWith("bookmarks", StringComparison.OrdinalIgnoreCase) ||
+                            Sub.StartsWith("apps", StringComparison.OrdinalIgnoreCase) ||
+                            Sub.StartsWith("dino", StringComparison.OrdinalIgnoreCase) ||
+                            Sub.StartsWith("management", StringComparison.OrdinalIgnoreCase) ||
+                            Sub.StartsWith("new-tab-page-third-party", StringComparison.OrdinalIgnoreCase) ||
+                            Sub.StartsWith("favicon", StringComparison.OrdinalIgnoreCase) ||
+                            Sub.StartsWith("sandbox", StringComparison.OrdinalIgnoreCase) ||
+                            Sub.StartsWith("bookmarks-side-panel.top-chrome", StringComparison.OrdinalIgnoreCase) ||
+                            Sub.StartsWith("customize-chrome-side-panel.top-chrome", StringComparison.OrdinalIgnoreCase) ||
+                            Sub.StartsWith("read-later.top-chrome", StringComparison.OrdinalIgnoreCase) ||
+                            Sub.StartsWith("tab-search.top-chrome", StringComparison.OrdinalIgnoreCase) ||
+                            Sub.StartsWith("tab-strip.top-chrome", StringComparison.OrdinalIgnoreCase) ||
+                            Sub.StartsWith("support-tool", StringComparison.OrdinalIgnoreCase) ||
+                            Sub.StartsWith("privacy-sandbox-dialog", StringComparison.OrdinalIgnoreCase) ||
+                            Sub.StartsWith("chrome-signin", StringComparison.OrdinalIgnoreCase) ||
+                            Sub.StartsWith("browser-switch", StringComparison.OrdinalIgnoreCase) ||
+                            Sub.StartsWith("profile-picker", StringComparison.OrdinalIgnoreCase) ||
+                            Sub.StartsWith("sync-confirmation", StringComparison.OrdinalIgnoreCase) ||
+                            Sub.StartsWith("app-settings", StringComparison.OrdinalIgnoreCase) ||
+                            Sub.StartsWith("managed-user-profile-notice", StringComparison.OrdinalIgnoreCase) ||
+                            Sub.StartsWith("reset-password", StringComparison.OrdinalIgnoreCase) ||
+                            Sub.StartsWith("connection-help", StringComparison.OrdinalIgnoreCase) ||
+                            Sub.StartsWith("connection-monitoring-detected", StringComparison.OrdinalIgnoreCase)
+                            )
+                            WebViewManager.RegisterOverrideRequest(e.Url, ResourceHandler.GetByteArray(App.GenerateCannotConnect(e.Url, WebErrorCode.InvalidUrl, "ERR_INVALID_URL"), Encoding.UTF8), "text/html", -1);
+                    }
+                }
+
+                if (!Private && App.Instance.AMP && Utils.IsHttpScheme(e.Url) && WebView.Engine != WebEngineType.Trident && !WebViewManager.OverrideRequests.ContainsKey(e.Url))
+                {
+                    string? AMPUrl = Utils.GetAMPUrl(e.Url);
+                    if (AMPUrl != null && AMPUrl != e.Url)
+                    {
+                        WebView.Stop();
+                        Address = AMPUrl;
+                        return;
+                    }
+                }
+                //WARNING: Do not remove BeginInvoke, otherwise it will somehow freeze CefSharp
+                Dispatcher.BeginInvoke(async () =>
+                {
+                    if (App.Instance.NeverSlowMode)
+                        ResetBudgets();
+                    HostCache.Clear();
+                    QRBitmap = null;
+                    //(BitmapSource, bool) IconData = await App.Instance.SetIcon(WebView.IsLoading, string.Empty, e.Url, Private);
+                    //SetIcon(IconData.Item1, IconData.Item2);
+                });
+            }
+        }
+
+        void SetIcon(BitmapSource Image, bool Unthemed)
+        {
+            Tab.Icon = Image;
+            IsUnthemedIcon = Unthemed;
+        }
+
+        private void WebView_PermissionRequested(object? sender, PermissionRequestedEventArgs e)
+        {
+            string Permissions = string.Empty;
+            string PermissionIcons = string.Empty;
+            foreach (WebPermissionKind Option in Enum.GetValues<WebPermissionKind>())
+            {
+                if (e.Kind.HasFlag(Option) && Option != WebPermissionKind.None)
+                {
+                    switch (Option)
+                    {
+                        /*case ProperPermissionRequestType.AccessibilityEvents:
+                            Permissions += "Respond to Accessibility Events";
+                            break;*/
+                        case WebPermissionKind.ArSession:
+                            Permissions += "Use your camera to create a 3D map of your surroundings";
+                            PermissionIcons += "\xE809";
+                            break;
+                        case WebPermissionKind.CameraPanTiltZoom:
+                            Permissions += "Move your camera";
+                            PermissionIcons += "\xE714";
+                            break;
+                        case WebPermissionKind.CameraStream:
+                            Permissions += "Use your camera";
+                            PermissionIcons += "\xE714";
+                            break;
+                        case WebPermissionKind.CapturedSurfaceControl:
+                            Permissions += "Scroll and zoom the contents of your shared tab";
+                            PermissionIcons += "\xec6c";
+                            break;
+                        case WebPermissionKind.Clipboard:
+                            Permissions += "See text and images in clipboard";
+                            PermissionIcons += "\xF0E3";
+                            break;
+                        case WebPermissionKind.TopLevelStorageAccess:
+                            Permissions += "Access cookies and site Data";
+                            PermissionIcons += "\xE8B7";
+                            break;
+                        case WebPermissionKind.DiskQuota:
+                            Permissions += "Store files on this device";
+                            PermissionIcons += "\xE8B7";
+                            break;
+                        case WebPermissionKind.LocalFonts:
+                            Permissions += "Use your computer fonts";
+                            PermissionIcons += "\xE8D2";
+                            break;
+                        case WebPermissionKind.Geolocation:
+                            Permissions += "Know your location";
+                            PermissionIcons += "\xECAF";
+                            break;
+                        case WebPermissionKind.IdentityProvider:
+                            Permissions += "Use your accounts to login to websites";
+                            PermissionIcons += "\xef58";
+                            break;
+                        case WebPermissionKind.IdleDetection:
+                            Permissions += "Know when you're actively using this device";
+                            PermissionIcons += "\xEA6C";
+                            break;
+                        case WebPermissionKind.MicStream:
+                            Permissions += "Use your microphone";
+                            PermissionIcons += "\xE720";
+                            break;
+                        case WebPermissionKind.MidiSysex:
+                            Permissions += "Use your MIDI devices";
+                            PermissionIcons += "\xEC4F";
+                            break;
+                        case WebPermissionKind.MultipleDownloads:
+                            Permissions += "Download multiple files";
+                            PermissionIcons += "\xE896";
+                            break;
+                        case WebPermissionKind.Notifications:
+                            Permissions += "Show notifications";
+                            PermissionIcons += "\xEA8F";
+                            break;
+                        case WebPermissionKind.KeyboardLock:
+                            Permissions += "Lock and use your keyboard";
+                            PermissionIcons += "\xf26b";
+                            break;
+                        case WebPermissionKind.PointerLock:
+                            Permissions += "Lock and use your mouse";
+                            PermissionIcons += "\xf271";
+                            break;
+                        case WebPermissionKind.ProtectedMediaIdentifier:
+                            Permissions += "Know your unique device identifier";
+                            PermissionIcons += "\xef3f";
+                            break;
+                        case WebPermissionKind.RegisterProtocolHandler:
+                            Permissions += "Open web links";
+                            PermissionIcons += "\xE71B";
+                            break;
+                        case WebPermissionKind.StorageAccess:
+                            Permissions += "Access cookies and site Data";
+                            PermissionIcons += "\xE8B7";
+                            break;
+                        case WebPermissionKind.VrSession:
+                            Permissions += "Use your virtual reality devices";
+                            PermissionIcons += "\xEC94";
+                            break;
+                        case WebPermissionKind.WindowManagement:
+                            Permissions += "Manage windows on all your displays";
+                            PermissionIcons += "\xE737";
+                            break;
+                        case WebPermissionKind.FileSystemAccess:
+                            Permissions += "Access file system";
+                            PermissionIcons += "\xEC50";
+                            break;
+                        case WebPermissionKind.ScreenShare:
+                            Permissions += "Share your screen\n";
+                            PermissionIcons += "\xE7F4\n";
+                            break;
+                        case WebPermissionKind.RecordAudio:
+                            Permissions += "Capture desktop audio\n";
+                            PermissionIcons += "\xE7F3\n";
+                            break;
+                    }
+                    Permissions += "\n";
+                    PermissionIcons += "\n";
+                }
+            }
+
+            Permissions = Permissions.TrimEnd('\n');
+            PermissionIcons = PermissionIcons.TrimEnd('\n');
+            if (string.IsNullOrEmpty(Permissions))
+                Permissions = e.Kind.ToString();
+
+            InformationDialogWindow InfoWindow = new("Permission", $"Allow {Utils.Host(e.Url)} to", Permissions, "\uE8D7", "Allow", "Block", PermissionIcons)
+            {
+                Topmost = true
+            };
+
+            //Investigate: WebView2 System.Runtime.InteropServices.SEHException: 'External component has thrown an exception.'
+            try
+            {
+                bool? Result = InfoWindow.ShowDialog();
+                if (Result == true)
+                    e.State = WebPermissionState.Allow;
+                else
+                    e.State = WebPermissionState.Deny;
+            }
+            catch { e.State = WebPermissionState.Deny; }
+            finally { InfoWindow.Close(); }
+        }
+
+        private void WebView_NewTabRequested(object? sender, NewTabRequestEventArgs e)
+        {
+            //TODO: Retain Referer request headers.
+            if (e.Popup.HasValue)
+            {
+                //TODO: Add popup permission check
+                int Width = (int)e.Popup.Value.Width;
+                if (Width == 0)
+                    Width = 600;
+                int Height = (int)e.Popup.Value.Height;
+                if (Height == 0)
+                    Height = 650;
+                PopupBrowser Popup = new(e.Url, Width, Height);
+                Popup.Show();
+                if (e.Popup.Value.Left != 0)
+                    Popup.Left = e.Popup.Value.Left;
+                if (e.Popup.Value.Top != 0)
+                    Popup.Top = e.Popup.Value.Top;
+                e.WebView = Popup.WebView;
+            }
+            else
+                e.WebView = Tab.ParentWindow.NewTab(e.Url, !e.Background, Tab.ParentWindow.TabsUI.SelectedIndex + 1, Private ? Private : Private, Tab.TabGroup);
+        }
+
+        private void WebView_NavigationError(object? sender, NavigationErrorEventArgs e)
+        {
+            if (WebView.Engine == WebEngineType.ChromiumEdge && e.RawError == "Unknown") //For Edge's SmartScreen error page
+                return;
+            if (WebView.Engine == WebEngineType.Trident)//Prevents navigation loop.
+                return;
+            WebViewManager.RegisterOverrideRequest(e.Url, ResourceHandler.GetByteArray(App.GenerateCannotConnect(e.Url, e.ErrorCode, e.RawError), Encoding.UTF8), "text/html", 1);
+            Navigate(e.Url);
+        }
+
+        private async void SetDarkMode(bool IsDarkModeEnabled)
+        {
+            if (WebView == null)
+                return;
+            WebView?.ExecuteScript(Scripts.DefaultBackgroundColorScript);
+            if (App.Instance.SmartDarkMode)
+            {
+                App.Instance.Dispatcher.BeginInvoke(async () =>
+                {
+                    if (WebView.CanExecuteJavascript)
+                    {
+                        var RequireForceDarkMode = await WebView?.EvaluateScriptAsync(Scripts.CheckNativeDarkModeScript);
+                        await WebView?.CallDevToolsAsync("Emulation.setAutoDarkModeOverride", new
+                        {
+                            enabled = RequireForceDarkMode == "1"
+                        });
+                    }
+                    else
+                    {
+                        EventHandler<LoadingStateResult>? DelayHandler = null;
+                        DelayHandler = async (sender, args) =>
+                        {
+                            if (WebView.CanExecuteJavascript)
+                            {
+                                WebView.LoadingStateChanged -= DelayHandler;
+                                var RequireForceDarkMode = await WebView?.EvaluateScriptAsync(Scripts.CheckNativeDarkModeScript);
+                                await WebView?.CallDevToolsAsync("Emulation.setAutoDarkModeOverride", new
+                                {
+                                    enabled = RequireForceDarkMode == "1"
+                                });
+                            }
+                        };
+                        WebView.LoadingStateChanged += DelayHandler;
+                    }
+                });
+            }
+            await WebView?.CallDevToolsAsync("Emulation.setAutoDarkModeOverride", new
+            {
+                enabled = IsDarkModeEnabled
+            });
+        }
+
+        private async void WebView_LoadingStateChanged(object? sender, LoadingStateResult e)
+        {
+            if (WebView == null || !WebView.IsBrowserInitialized)
+                return;
+            if (Address.StartsWith("slbr:"))
+                WebView?.ExecuteScript(Scripts.InternalScript);
+            BackButton.IsEnabled = CanGoBack;
+            ForwardButton.IsEnabled = CanGoForward;
+            ReloadButton.Content = IsLoading ? "\xF78A" : "\xE72C";
+            SetDarkMode(App.Instance.CurrentTheme.DarkWebPage);
+
+            CurrentWebAppManifest = null;
+            CurrentWebAppManifestUrl = string.Empty;
+            InstallWebAppButton.Visibility = Visibility.Collapsed;
+            for (int i = 0; i < LocalInfoBars.Count; i++)
+                CloseInfoBar(LocalInfoBars[i]);
+            BrowserLoadChanged(Address, IsLoading, e.HttpStatusCode);
+            if (WebView?.CanExecuteJavascript ?? false)
+            {
+                if (Address.StartsWith("https://chromewebstore.google.com/detail/"))
+                    WebView?.ExecuteScript(Scripts.ChromeWebStoreScript);
+                else if (Address.StartsWith("https://microsoftedge.microsoft.com/addons/detail/"))
+                {
+                    WebView?.ExecuteScript(Scripts.WebStoreAPIScript);
+                    WebView?.ExecuteScript(Scripts.EdgeWebStoreScript);
+                }
+                else if (Address.StartsWith("https://addons.mozilla.org/en-US/firefox/addon/"))
+                {
+                    WebView?.ExecuteScript(Scripts.WebStoreAPIScript);
+                    WebView?.ExecuteScript(Scripts.FirefoxWebStoreScript);
+                }
+            }
+            if (!IsLoading)
+            {
+                if (!Private)
+                    App.Instance.AddHistory(Address, Title);
+                if (bool.Parse(App.Instance.GlobalSave.Get("SmoothScroll")))
+                    WebView?.ExecuteScript(Scripts.ScrollScript);
+                if (!Address.StartsWith("slbr:"))
+                {
+                    if (WebView?.CanExecuteJavascript ?? false)
+                    {
+                        if (Utils.IsHttpScheme(Address))
+                        {
+                            if (bool.Parse(App.Instance.GlobalSave.Get("WebNotifications")))
+                                WebView?.ExecuteScript(Scripts.NotificationPolyfill);
+                            if (!Private && bool.Parse(App.Instance.GlobalSave.Get("OpenSearch")))
+                            {
+                                string SiteHost = Utils.FastHost(Address);
+                                if (App.Instance.SearchEngines.Any(i => i.Host == SiteHost))
+                                    WebView?.ExecuteScript(Scripts.OpenSearchScript);
+                            }
+                            if (bool.Parse(App.Instance.GlobalSave.Get("WebApps")))
+                            {
+                                var (Installable, ManifestUrl) = await IsInstallableAsync();
+                                if (Installable)
+                                {
+                                    InstallWebAppButton.Visibility = Visibility.Visible;
+                                    CurrentWebAppManifestUrl = ManifestUrl;
+                                }
+                            }
+                            if (bool.Parse(App.Instance.GlobalSave.Get("AdaptiveTheme")))
+                            {
+                                try
+                                {
+                                    Color? ThemeColor = null;
+                                    string? Task = ((await WebView?.EvaluateScriptAsync("document.querySelector('meta[name=\"theme-color\"]')?.content ?? document.querySelector('meta[name=\"msapplication-TileColor\"]')?.content")) ?? string.Empty).ToString();
+                                    if (Task != null)
+                                        ThemeColor = Utils.ParseHTMLColor(Task);
+                                    SetCustomTheme(ThemeColor);
+                                }
+                                catch { }
+                            }
+                            if (bool.Parse(App.Instance.GlobalSave.Get("OfferTranslate")))
+                            {
+                                try
+                                {
+                                    string? Language = ((await WebView?.EvaluateScriptAsync(Scripts.DetectLanguageScript)) ?? string.Empty).ToString().Split('-')[0];
+                                    if (!string.IsNullOrEmpty(Language))
+                                    {
+                                        if (!App.Instance.Languages.Any(i => i.Tooltip.StartsWith(Language) || i.Name.ToLowerInvariant() == Language))
+                                            TranslateButton.OpenPopup();
+                                    }
+                                }
+                                catch { }
+                            }
+                        }
+                        else if (Address.StartsWith("file:///"))
+                        {
+                            if (Address.EndsWith('/'))
+                            {
+                                if (Directory.Exists(Uri.UnescapeDataString(Address.AsSpan(8)).Replace('/', '\\')))
+                                    WebView?.ExecuteScript(Scripts.FileScript);
+                            }
+                        }
+                    }
+                    /*IWebCookieManager CookieManager = await WebView.GetCookieManager();
+                    List<string> CookieSites = await CookieManager.GetAllSites();
+                    foreach (var Site in CookieSites)
+                        Debug.WriteLine($"Name: {Site}");*/
+                    /*List<IWebCookie> CookiesList = await CookieManager.GetCookies(Address);
+                    foreach (var Cookie in CookiesList)
+                        Debug.WriteLine($"Name: {Cookie.Name}, Value: {Cookie.Value}");*/
+                    /*IPermissionManager? PermissionManager = await WebView.GetPermissionManager();
+                    if (PermissionManager != null)
+                    {
+                        foreach (WebPermissionType SettingType in Enum.GetValues<WebPermissionType>())
+                        {
+                            (WebPermissionState Value, bool IsSupported) = await PermissionManager.GetSetting(Utils.FastHost(Address, false, true) + "/", SettingType);
+                            Debug.WriteLine($"Setting: {SettingType}, Value: {Value}, Supported: {IsSupported}");
+                        }
+                    }*/
+                }
+            }
+        }
+
+        /*public async Task<Color?> GetTopPixelColor()
+        {
+            byte[] Bytes = await WebView.TakeScreenshotAsync(WebScreenshotFormat.JPEG, new Rect((int)WebView.Control.Width / 2, 1, 1, 1));
+            if (Bytes == null || Bytes.Length == 0)
+                return null;
+            try
+            {
+                using MemoryStream Stream = new(Bytes);
+                BitmapDecoder Decoder = BitmapDecoder.Create(Stream, BitmapCreateOptions.None, BitmapCacheOption.OnLoad);
+                BitmapFrame Frame = Decoder.Frames[0];
+                byte[] Pixels = new byte[4];
+                Frame.CopyPixels(new Int32Rect(0, 0, 1, 1), Pixels, 4, 0);
+                byte B = Pixels[0];
+                byte G = Pixels[1];
+                byte R = Pixels[2];
+                byte A = Pixels[3];
+                return Color.FromArgb(A, R, G, B);
+            }
+            catch
+            {
+                return null;
+            }
+        }*/
+
+        private void SetCustomTheme(Color? _Color)
+        {
+            if (_Color.HasValue)
+            {
+                IsCustomTheme = true;
+                Theme SiteTheme = App.Instance.GenerateTheme(_Color.Value);
+                SetAppearance(SiteTheme);
+                TabItem _TabItem = Tab.ParentWindow.TabsUI.ItemContainerGenerator.ContainerFromItem(Tab) as TabItem;
+                _TabItem.Foreground = new SolidColorBrush(SiteTheme.FontColor);
+                _TabItem.Background = new SolidColorBrush(SiteTheme.PrimaryColor);
+                _TabItem.BorderBrush = new SolidColorBrush(SiteTheme.BorderColor);
+            }
+            else if (IsCustomTheme)
+            {
+                IsCustomTheme = false;
+                SetAppearance(App.Instance.CurrentTheme);
+                TabItem _TabItem = Tab.ParentWindow.TabsUI.ItemContainerGenerator.ContainerFromItem(Tab) as TabItem;
+                _TabItem.Foreground = new SolidColorBrush(App.Instance.CurrentTheme.FontColor);
+                _TabItem.Background = new SolidColorBrush(App.Instance.CurrentTheme.PrimaryColor);
+                _TabItem.BorderBrush = new SolidColorBrush(App.Instance.CurrentTheme.BorderColor);
+            }
+        }
+        private async void HandleInternalMessage(Dictionary<string, object> Message)
+        {
+            if (!Message.TryGetValue("function", out object? Value))
+                return;
+            try
+            {
+                switch (Value?.ToString())
+                {
+                    case "cors":
+                        string FetchUrl = Message["url"].ToString();
+                        string Data = string.Empty;
+                        if (Utils.IsHttpScheme(FetchUrl))
+                            Data = await App.MiniHttpClient.GetStringAsync(FetchUrl);
+                        else if (File.Exists(FetchUrl))
+                            Data = $"data:image/png;base64,{Convert.ToBase64String(File.ReadAllBytes(FetchUrl))}";
+                        WebView?.ExecuteScript($"window.internal.receive('cors={Uri.EscapeDataString(Data.AsSpan())}');");
+                        break;
+                    case "file_picker":
+                        string Accept = Message["accept"].ToString();
+                        string Filter;
+                        switch (Accept)
+                        {
+                            case "image":
+                                Filter = "Image files (*.jpg;*.jpeg;*.png;*.gif;*.bmp;*.webp;*.tiff)|*.jpg;*.jpeg;*.png;*.gif;*.bmp;*.webp;*.tiff";
+                                break;
+                            /*case "video":
+                                Filter = "Video files (*.mp4;*.mkv;*.avi;*.mov;*.wmv;*.flv;*.webm)|*.mp4;*.mkv;*.avi;*.mov;*.wmv;*.flv;*.webm";
+                                break;
+                            case "media":
+                                Filter = "Image files (*.jpg;*.jpeg;*.png;*.gif;*.bmp;*.webp;*.tiff)|*.jpg;*.jpeg;*.png;*.gif;*.bmp;*.webp;*.tiff|Video files (*.mp4;*.mkv;*.avi;*.mov;*.wmv;*.flv;*.webm)|*.mp4;*.mkv;*.avi;*.mov;*.wmv;*.flv;*.webm";
+                                break;*/
+                            default:
+                                Filter = "All files (*.*)|*.*";
+                                break;
+                        }
+                        OpenFileDialog OpenFileDialog = new()
+                        {
+                            Filter = Filter,
+                            Title = "Open",
+                            //InitialDirectory = Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments)
+                        };
+
+                        if (OpenFileDialog.ShowDialog() == true)
+                            WebView?.ExecuteScript($"window.internal.receive('file_picker={Uri.EscapeDataString(OpenFileDialog.FileName.AsSpan())}');");
+                        break;
+                    case "search":
+                        Address = Utils.FilterUrlForBrowser(Message["variable"]?.ToString() ?? string.Empty, App.Instance.DefaultSearchProvider.SearchUrl);
+                        break;
+                }
+            }
+            catch { }
+        }
+
+        private async void WebView_JavaScriptMessageReceived(object? sender, string e)
+        {
+            if (string.IsNullOrWhiteSpace(e))
+                return;
+            Dictionary<string, object>? Message;
+            try
+            {
+                Message = JsonSerializer.Deserialize<Dictionary<string, object>>(e);
+            }
+            catch { return; }
+            if (Message == null || !Message.TryGetValue("type", out object? Value))
+                return;
+
+            switch (Value.ToString())
+            {
+                case "__extension__":
+                    if (ExtensionFailInfoBar != null)
+                        LocalInfoBars.Remove(ExtensionFailInfoBar);
+                    bool Edge = false;
+                    bool Firefox = false;
+                    if (Address.StartsWith("https://microsoftedge.microsoft.com/addons/detail/"))
+                        Edge = true;
+                    else if (Address.StartsWith("https://addons.mozilla.org/en-US/firefox/addon/"))
+                        Firefox = true;
+                    if (Edge || Firefox)
+                    {
+                        string Task = Message["task"]?.ToString()!;
+                        string Payload = Message["data"]?.ToString()!;
+
+                        switch (Message["action"]?.ToString()!)
+                        {
+                            case "check":
+                                if (App.Instance.ReadOnlyInstance)
+                                    WebView.ExecuteScript($"window.slbr.webstore.receive('{Task}', false);");
+                                else
+                                    WebView.ExecuteScript($"window.slbr.webstore.receive('{Task}', {App.Instance.ExtensionManager.GetExtensions(WebView.Engine)?.Any(i => i.AlternateID == Payload).ToString().ToLower()});");
+                                    //WebView.ExecuteScript($"window.slbr.webstore.receive('{Task}', {App.Instance.ExtensionManager.GetExtensions(WebView.Engine)?.Any(i => i.ID == Payload || i.AlternateID == Payload).ToString().ToLower()});");
+                                break;
+                            case "install":
+                                if (App.Instance.ReadOnlyInstance)
+                                {
+                                    _ = Dispatcher.BeginInvoke(() =>
+                                    {
+                                        ExtensionFailInfoBar = new()
+                                        {
+                                            Icon = "\xea86",
+                                            Title = "Extension Installation Failed",
+                                            Description = [new() { Text = "Extensions cannot be installed in guest mode." }],
+                                        };
+                                        LocalInfoBars.Add(ExtensionFailInfoBar);
+                                    });
+                                    WebView.ExecuteScript($"window.slbr.webstore.receive('{Task}', false);");
+                                }
+                                else if (WebView.Engine == WebEngineType.Chromium)
+                                {
+                                    _ = Dispatcher.BeginInvoke(() =>
+                                    {
+                                        ExtensionFailInfoBar = new()
+                                        {
+                                            Icon = "\xea86",
+                                            Title = "Extension Installation Failed",
+                                            Description = [new() { Text = "Installation of extensions at runtime is not supported by Chromium (CEF). Do you want to switch to the Edge (WebView2) engine?" }],
+                                            Actions = [
+                                                new() { Text = "Switch", Background = (SolidColorBrush)FindResource("IndicatorBrush"), Foreground = App.Instance.WhiteColor, Command = new RelayCommand(() => { CloseInfoBar(ProprietaryCodecsInfoBar); Action(Actions.SwitchWebEngine, "1"); }) },
+                                            ]
+                                        };
+                                        LocalInfoBars.Add(ExtensionFailInfoBar);
+                                    });
+                                    WebView.ExecuteScript($"window.slbr.webstore.receive('{Task}', false);");
+                                }
+                                else
+                                {
+                                    bool Result = false;
+                                    string? DownloadUrl = null;
+                                    using JsonDocument Document = JsonDocument.Parse(Payload);
+
+                                    string DialogIcon = "\uEA86";
+                                    if (Document.RootElement.TryGetProperty("icon", out JsonElement IconProperty) && IconProperty.GetString() is string IconUrl)
+                                        DialogIcon = IconUrl;
+                                    InformationDialogWindow InfoWindow = new("Confirmation", $"Install \"{Document.RootElement.GetProperty("name").GetString()}\" extension", "This extension can be installed on SLBr.", DialogIcon, "Install", "Cancel")
+                                    {
+                                        Topmost = true
+                                    };
+                                    if (InfoWindow.ShowDialog() == true)
+                                    {
+                                        if (Document.RootElement.GetProperty("url").GetString() is string RawDownloadUrl)
+                                            DownloadUrl = RawDownloadUrl;
+                                        else
+                                            DownloadUrl = $"https://edge.microsoft.com/extensionwebstorebase/v1/crx?response=redirect&os=win&arch=x64&prod=chromiumcrx&prodchannel=canary&prodversion={Cef.ChromiumVersion}&lang=en-US&acceptformat=crx3,puff&x=id%3D{Document.RootElement.GetProperty("id").GetString()}%26installsource%3Dondemand%26uc";
+                                        if (!string.IsNullOrEmpty(DownloadUrl))
+                                        {
+                                            HttpRequestMessage Request = new(HttpMethod.Get, DownloadUrl);
+                                            Request.Headers.Add("User-Agent", App.Instance.UserAgent);
+
+                                            HttpResponseMessage Response = await App.MiniHttpClient.SendAsync(Request);
+
+                                            byte[] Bytes = null;
+
+                                            if (Response.StatusCode == System.Net.HttpStatusCode.Redirect || Response.StatusCode == System.Net.HttpStatusCode.Found || Response.StatusCode == System.Net.HttpStatusCode.MovedPermanently)
+                                            {
+                                                Uri? RedirectUrl = Response.Headers.Location;
+                                                if (RedirectUrl != null)
+                                                    Bytes = await App.MiniHttpClient.GetByteArrayAsync(RedirectUrl.ToString());
+                                            }
+                                            else if (Response.IsSuccessStatusCode)
+                                                Bytes = await Response.Content.ReadAsByteArrayAsync();
+
+                                            if (Bytes != null && Bytes.Length > 0)
+                                            {
+                                                (Result, string? Error) = await App.Instance.ExtensionManager.InstallExtension(Bytes, WebView.Engine);
+                                                if (Result)
+                                                    ExtensionsButton.OpenMenu();
+                                                else if (!string.IsNullOrEmpty(Error))
+                                                {
+                                                    _ = Dispatcher.BeginInvoke(() =>
+                                                    {
+                                                        ExtensionFailInfoBar = new()
+                                                        {
+                                                            Icon = "\xea86",
+                                                            Title = "Extension Installation Failed",
+                                                            Description = [new() { Text = Error }]
+                                                        };
+                                                        LocalInfoBars.Add(ExtensionFailInfoBar);
+                                                    });
+                                                }
+                                            }
+                                        }
+                                    }
+                                    WebView.ExecuteScript($"window.slbr.webstore.receive('{Task}', {Result.ToString().ToLower()});");
+                                }
+                                break;
+                            case "remove":
+                                if (App.Instance.ReadOnlyInstance)
+                                    WebView.ExecuteScript($"window.slbr.webstore.receive('{Task}', false);");
+                                else
+                                {
+                                    bool Result = false;
+                                    Extension? _Extension = App.Instance.ExtensionManager.GetExtensions(WebView.Engine)?.FirstOrDefault(i => i.AlternateID == Payload);
+                                    if (_Extension != null)
+                                    {
+                                        string DialogIcon = "\uEA86";
+                                        if (!string.IsNullOrEmpty(_Extension.ActionIcon))
+                                            DialogIcon = _Extension.ActionIcon;
+                                        InformationDialogWindow InfoWindow = new("Confirmation", $"Uninstall \"{_Extension.Name}\" extension", "Are you sure you want to remove this extension?", DialogIcon, "Remove", "Cancel")
+                                        {
+                                            Topmost = true
+                                        };
+                                        if (InfoWindow.ShowDialog() == true)
+                                            Result = await App.Instance.ExtensionManager.UninstallExtension(_Extension);
+                                    }
+                                    WebView.ExecuteScript($"window.slbr.webstore.receive('{Task}', {Result.ToString().ToLower()});");
+                                }
+                                break;
+                        }
+                    }
+                    else
+                    {
+                        _ = Dispatcher.BeginInvoke(() =>
+                        {
+                            ExtensionFailInfoBar = new()
+                            {
+                                Icon = "\xea86",
+                                Title = "Extension Installation Failed",
+                                Description = [new() { Text = "Extensions cannot be installed from untrusted sources." }],
+                            };
+                            LocalInfoBars.Add(ExtensionFailInfoBar);
+                        });
+                    }
+                    break;
+                case "__opensearch__":
+                    App.Instance.SaveOpenSearch(Message["name"]?.ToString()!, Message["url"]?.ToString()!);
+                    break;
+                case "__internal__":
+                    if (Address.StartsWith("slbr:"))
+                        HandleInternalMessage(Message);
+                    break;
+                case "__web_risk_ignore__":
+                    if (WebViewManager.OverrideRequests.ContainsKey(Address))
+                    {
+                        WebViewManager.OverrideRequests.Remove(Address, out _);
+                        App.Instance._WebRiskHandler.SafeHashes.Add(BitConverter.ToUInt64(SHA256.HashData(Encoding.UTF8.GetBytes(Utils.CleanUrl(Address, true, false, true, false, true))), 0));
+                        Refresh();
+                    }
+                    break;
+                case "__notification__":
+                    try
+                    {
+                        var DataJson = Message["data"]?.ToString();
+                        if (string.IsNullOrWhiteSpace(DataJson))
+                            return;
+                        using JsonDocument Document = JsonDocument.Parse(DataJson);
+                        string Title = Document.RootElement.GetProperty("title").GetString();
+                        string Body = Document.RootElement.GetProperty("body").GetString();
+                        string? RawIcon = Document.RootElement.GetProperty("icon").GetString();
+                        string? RawImage = Document.RootElement.GetProperty("image").GetString();
+                        bool ReduceDisk = bool.Parse(App.Instance.GlobalSave.Get("ReduceDisk"));
+                        string? Icon = ReduceDisk || string.IsNullOrEmpty(RawIcon) ? null : Utils.ResolveUrl(Address, Document.RootElement.GetProperty("icon").GetString());
+                        string? Image = ReduceDisk || string.IsNullOrEmpty(RawImage) ? null : Utils.ResolveUrl(Address, Document.RootElement.GetProperty("image").GetString());
+
+                        //string TextDirection = Document.RootElement.TryGetProperty("dir", out var DirElement) ? DirElement.GetString() : "ltr";
+                        bool Silent = Document.RootElement.TryGetProperty("silent", out var SilentElement) && SilentElement.GetBoolean();
+                        App.Instance.Dispatcher.BeginInvoke(async () =>
+                        {
+                            string? LocalIconFile = await App.Instance.DownloadNotificationAsset(Icon);
+                            string? LocalImageFile = await App.Instance.DownloadNotificationAsset(Image);
+                            App.ShowPortableNotification(Title, Body, Utils.Host(Address, false), LocalIconFile, LocalImageFile, Silent);
+                            //, Silent, TextDirection == "rtl"
+                        });
+                    }
+                    catch { }
+                    break;
+            }
+        }
+
+        private void WebView_FullscreenChanged(object? sender, bool e)
+        {
+            Tab.ParentWindow.Fullscreen(e, this);
+        }
+
+        private void WebView_FrameLoadStart(object? sender, string e)
+        {
+            if (Utils.IsHttpScheme(e))
+            {
+                WebView?.ExecuteScript(Scripts.AntiCloseScript);//Replacement for DoClose of LifeSpanHandler in RuntimeStyle Chrome
+                WebView?.ExecuteScript(Scripts.ShiftContextMenuScript);
+                if (bool.Parse(App.Instance.GlobalSave.Get("AntiTamper")))
+                {
+                    if (bool.Parse(App.Instance.GlobalSave.Get("AntiFullscreen")))
+                        WebView?.ExecuteScript(Scripts.AntiFullscreenScript);
+                    if (bool.Parse(App.Instance.GlobalSave.Get("AntiInspectDetect")))
+                        WebView?.ExecuteScript(Scripts.LateAntiDevtoolsScript);
+                    if (bool.Parse(App.Instance.GlobalSave.Get("BypassSiteMenu")))
+                        WebView?.ExecuteScript(Scripts.ForceContextMenuScript);
+                    if (bool.Parse(App.Instance.GlobalSave.Get("TextSelection")))
+                        WebView?.ExecuteScript(Scripts.AllowInteractionScript);
+                    if (bool.Parse(App.Instance.GlobalSave.Get("RemoveFilter")))
+                        WebView?.ExecuteScript(Scripts.RemoveFilterCSS);
+                    if (bool.Parse(App.Instance.GlobalSave.Get("RemoveOverlay")))
+                        WebView?.ExecuteScript(Scripts.RemoveOverlayCSS);
+                }
+            }
+        }
+
+        /*private void WebView_FindResult(object? sender, FindResult e)
+        {
+        }*/
+
+        private void WebView_ExternalProtocolRequested(object? sender, ExternalProtocolEventArgs e)
+        {
+            string Host = Utils.FastHost(e.Origin);
+            InformationDialogWindow InfoWindow = new("Warning", $"Open {Utils.GetProtocolName(Utils.GetScheme(e.Url))}", $"{(Host.Length == 0 ? "A website" : Host)} is requesting to open this application.", string.Empty, "Open", "Cancel")
+            {
+                Topmost = true
+            };
+            e.Launch = InfoWindow.ShowDialog() == true;
+        }
+        CancellationTokenSource? SpellCheckTokenCancellationTokenSource;
+        public async void WebView_ContextMenuRequested(object? sender, WebContextMenuEventArgs e)
+        {
+            bool IsWPF = sender is FrameworkElement;
+            SpellCheckTokenCancellationTokenSource?.Cancel();
+            SpellCheckTokenCancellationTokenSource?.Dispose();
+            SpellCheckTokenCancellationTokenSource = null;
+
+            bool IsPageMenu = true;
+            ContextMenu BrowserMenu = new();
+
+            foreach (WebContextMenuType i in Enum.GetValues<WebContextMenuType>())
+            {
+                if (e.MenuType.HasFlag(i))
+                {
+                    if (BrowserMenu.Items.Count != 0 && BrowserMenu.Items[BrowserMenu.Items.Count - 1].GetType() == typeof(MenuItem))
+                        BrowserMenu.Items.Add(new Separator());
+                    if (i == WebContextMenuType.Link)
+                    {
+                        IsPageMenu = false;
+                        bool HasLinkText = !string.IsNullOrEmpty(e.LinkText?.Trim());
+                        BrowserMenu.Items.Add(new MenuItem { Icon = "\uE8A7", Header = "Open link in new tab", Command = new RelayCommand(_ => Tab.ParentWindow.NewTab(e.LinkUrl, true, Tab.ParentWindow.TabsUI.SelectedIndex + 1, Private, Tab.TabGroup)) });
+                        BrowserMenu.Items.Add(new MenuItem { Icon = "\ue71b", Header = "Copy link", Command = new RelayCommand(_ => App.Instance.CopyToClipboard(e.LinkUrl, 0)) });
+                        if (e.LinkUrl.StartsWith("mailto:"))
+                            BrowserMenu.Items.Add(new MenuItem { Icon = "\ue715", Header = "Copy email address", Command = new RelayCommand(_ => App.Instance.CopyToClipboard(e.LinkUrl[7..], 2)) });
+                        if (HasLinkText)
+                            BrowserMenu.Items.Add(new MenuItem { /*IsEnabled = HasLinkText, */Icon = "\ue8c8", Header = "Copy link text", Command = new RelayCommand(_ => App.Instance.CopyToClipboard(e.LinkText, 2)) });
+                        BrowserMenu.Items.Add(new MenuItem { Icon = "\ue72d", Header = "Share link", Command = new RelayCommand(_ => Share(e.LinkUrl)) });
+                        if (HasLinkText)
+                            BrowserMenu.Items.Add(new MenuItem { Icon = "\uF6Fa", Header = $"Search \"{e.LinkText.ReplaceLineEndings("").Trim().Cut(20, true)}\" in new tab", Command = new RelayCommand(_ => Tab.ParentWindow.NewTab(Utils.FixUrl(string.Format(App.Instance.DefaultSearchProvider.SearchUrl, e.LinkText.ReplaceLineEndings("").Trim())), true, Tab.ParentWindow.TabsUI.SelectedIndex + 1, Private)) });
+                    }
+                    else if (i == WebContextMenuType.Selection && !e.IsEditable && !string.IsNullOrEmpty(e.SelectionText.ReplaceLineEndings("").Trim()))
+                    {
+                        //TextBlock? _TextBlock = sender as TextBlock;
+                        IsPageMenu = false;
+                        BrowserMenu.Items.Add(new MenuItem { Icon = "\uF6Fa", Header = $"Search \"{e.SelectionText.ReplaceLineEndings("").Trim().Cut(20, true)}\" in new tab", Command = new RelayCommand(_ => Tab.ParentWindow.NewTab(Utils.FixUrl(string.Format(App.Instance.DefaultSearchProvider.SearchUrl, e.SelectionText.ReplaceLineEndings("").Trim())), true, Tab.ParentWindow.TabsUI.SelectedIndex + 1, Private)) });
+                        BrowserMenu.Items.Add(new MenuItem { InputGestureText = "Ctrl+C", Icon = "\ue8c8", Header = "Copy", Command = new RelayCommand(_ => App.Instance.CopyToClipboard(e.SelectionText, 2)) });
+                        //if (_TextBlock == null)
+                        if (!IsWPF)
+                        {
+                            BrowserMenu.Items.Add(new MenuItem
+                            {
+                                Icon = "\ue71b",
+                                Header = "Copy link to highlight",
+                                Command = new RelayCommand(async () =>
+                                {
+                                    //TODO: Implement offline support.
+                                    string FragmentText = (await WebView.EvaluateScriptAsync(Scripts.TextFragmentRangeScript)).ToString();
+                                    if (string.IsNullOrWhiteSpace(FragmentText))
+                                    {
+                                        App.Instance.CopyToClipboard(Address, 0);
+                                        return;
+                                    }
+                                    App.Instance.CopyToClipboard($"{Address.Split('#')[0]}#:~:text={FragmentText}", 0);
+                                })
+                            });
+                        }
+                        BrowserMenu.Items.Add(new Separator());
+                        //if (_TextBlock != null)
+                        if (IsWPF)
+                            BrowserMenu.Items.Add(new MenuItem { InputGestureText = "Ctrl+A", Icon = "\ue8b3", Header = "Select all", Command = ApplicationCommands.SelectAll });
+                        else
+                            BrowserMenu.Items.Add(new MenuItem { InputGestureText = "Ctrl+A", Icon = "\ue8b3", Header = "Select all", Command = new RelayCommand(_ => WebView?.SelectAll()) });
+                    }
+                    else if (i == WebContextMenuType.Media)
+                    {
+                        if (e.MediaType == WebContextMenuMediaType.Image)
+                        {
+                            IsPageMenu = false;
+                            BrowserMenu.Items.Add(new MenuItem { Icon = "\uE8A7", Header = "Open image in new tab", Command = new RelayCommand(_ => Tab.ParentWindow.NewTab(e.SourceUrl, true, Tab.ParentWindow.TabsUI.SelectedIndex + 1, Private, Tab.TabGroup)) });
+                            BrowserMenu.Items.Add(new MenuItem { Icon = "\ue792", Header = "Save image as", Command = new RelayCommand(_ => WebView?.Download(e.SourceUrl)) });
+                            BrowserMenu.Items.Add(new MenuItem
+                            {
+                                Icon = "\xe8b9",
+                                Header = "Copy image",
+                                Command = new RelayCommand(_ =>
+                                {
+                                    try { Utils.DownloadAndCopyImage(e.SourceUrl); }
+                                    catch { App.Instance.CopyToClipboard(e.SourceUrl, 1); }
+                                })
+                            });
+                            BrowserMenu.Items.Add(new MenuItem { Icon = "\ue71b", Header = "Copy image link", Command = new RelayCommand(_ => App.Instance.CopyToClipboard(e.SourceUrl, 0)) });
+                            BrowserMenu.Items.Add(new MenuItem
+                            {
+                                Icon = "\uF6Fa",
+                                Header = "Search image",
+                                Command = new RelayCommand(_ =>
+                                {
+                                    string Url = string.Empty;
+                                    switch (App.Instance.GlobalSave.GetInt("ImageSearch"))
+                                    {
+                                        case 0:
+                                            Url = $"https://lens.google.com/uploadbyurl?url={Uri.EscapeDataString(e.SourceUrl.AsSpan())}";
+                                            break;
+                                        case 1:
+                                            Url = $"https://www.bing.com/images/searchbyimage?cbir=sbi&imgurl={Uri.EscapeDataString(e.SourceUrl.AsSpan())}";
+                                            break;
+                                        case 2:
+                                            Url = $"https://yandex.com/images/search?rpt=imageview&url={Uri.EscapeDataString(e.SourceUrl.AsSpan())}";
+                                            break;
+                                        case 3:
+                                            Url = $"https://tineye.com/search?url={Uri.EscapeDataString(e.SourceUrl.AsSpan())}";
+                                            break;
+                                    }
+                                    Tab.ParentWindow.NewTab(Url, true, Tab.ParentWindow.TabsUI.SelectedIndex + 1, Private, Tab.TabGroup);
+                                })
+                            });
+                        }
+                        else if (e.MediaType == WebContextMenuMediaType.Video)
+                        {
+                            IsPageMenu = false;
+                            BrowserMenu.Items.Add(new MenuItem { Icon = "\uE8A7", Header = "Open video in new tab", Command = new RelayCommand(_ => Tab.ParentWindow.NewTab(e.SourceUrl, true, Tab.ParentWindow.TabsUI.SelectedIndex + 1, Private, Tab.TabGroup)) });
+                            BrowserMenu.Items.Add(new MenuItem { Icon = "\ue792", Header = "Save video as", Command = new RelayCommand(_ => WebView?.Download(e.SourceUrl)) });
+                            BrowserMenu.Items.Add(new MenuItem { Icon = "\ue71b", Header = "Copy video link", Command = new RelayCommand(_ => App.Instance.CopyToClipboard(e.SourceUrl, 0)) });
+                            BrowserMenu.Items.Add(new MenuItem { Icon = "\uee49", Header = "Picture in picture", Command = new RelayCommand(_ => WebView?.ExecuteScript("(async()=>{let playingVideo=Array.from(document.querySelectorAll('video')).find(v=>!v.paused&&!v.ended&&v.readyState>2);if (!playingVideo){playingVideo=document.querySelector('video');}if (playingVideo&&document.pictureInPictureEnabled){await playingVideo.requestPictureInPicture();}})();")) });
+                        }
+                        else if (e.MediaType == WebContextMenuMediaType.Audio)
+                        {
+                            IsPageMenu = false;
+                            BrowserMenu.Items.Add(new MenuItem { Icon = "\uE8A7", Header = "Open audio in new tab", Command = new RelayCommand(_ => Tab.ParentWindow.NewTab(e.SourceUrl, true, Tab.ParentWindow.TabsUI.SelectedIndex + 1, Private, Tab.TabGroup)) });
+                            BrowserMenu.Items.Add(new MenuItem { Icon = "\ue792", Header = "Save audio as", Command = new RelayCommand(_ => WebView?.Download(e.SourceUrl)) });
+                            BrowserMenu.Items.Add(new MenuItem { Icon = "\ue71b", Header = "Copy audio link", Command = new RelayCommand(_ => App.Instance.CopyToClipboard(e.SourceUrl, 0)) });
+                        }
+                        //TODO: Implement canvas handling.
+                        /*else if (e.MediaType == WebContextMenuMediaType.Canvas)
+                        {
+                            IsPageMenu = false;
+                            BrowserMenu.Items.Add(new MenuItem { Icon = "\ue792", Header = "Save image as", Command = new RelayCommand(_ => WebView?.Download(e.SourceUrl)) });
+                            BrowserMenu.Items.Add(new MenuItem
+                            {
+                                Icon = "\xe8b9",
+                                Header = "Copy image",
+                                Command = new RelayCommand(_ => {
+                                    try { Utils.DownloadAndCopyImage(e.SourceUrl); }
+                                    catch { Clipboard.SetText(e.SourceUrl); }
+                                })
+                            });
+                        }*/
+                    }
+                }
+            }
+            if (e.IsEditable)
+            {
+                //TODO: Utilize engine spell checker.
+                //Dysfunctional spell check.
+                /*if (e.SpellCheck && e.DictionarySuggestions.Count != 0)
+                {
+                    foreach (string Suggestion in e.DictionarySuggestions)
+                    {
+                        BrowserMenu.Items.Add(new MenuItem { Icon = "\uf87b", Header = Suggestion, Command = new RelayCommand(_ =>
+                        {
+                            if (WebView is ChromiumWebView ChromiumWebView)
+                                ((ChromiumWebBrowser)ChromiumWebView.Control).GetBrowserHost().ReplaceMisspelling(Suggestion);
+                        })});
+                    }
+                    BrowserMenu.Items.Add(new MenuItem { Icon = "\ue82e", Header = "Add to dictionary", Command = new RelayCommand(_ =>
+                    {
+                        if (WebView is ChromiumWebView ChromiumWebView)
+                            ((ChromiumWebBrowser)ChromiumWebView.Control).GetBrowserHost().AddWordToDictionary(e.MisspelledWord);
+                    }) });
+                    BrowserMenu.Items.Add(new Separator());
+                }*/
+                if (WebViewManager.RuntimeSettings.SpellCheck && !string.IsNullOrEmpty(e.SelectionText) && !e.SelectionText.Contains(' '))
+                {
+                    SpellCheckTokenCancellationTokenSource = new();
+                    CancellationToken SpellCheckToken = SpellCheckTokenCancellationTokenSource.Token;
+                    BrowserMenu.Closed += (s, e) =>
+                    {
+                        SpellCheckTokenCancellationTokenSource?.Cancel();
+                        SpellCheckTokenCancellationTokenSource?.Dispose();
+                        SpellCheckTokenCancellationTokenSource = null;
+                    };
+                    _ = Application.Current.Dispatcher.BeginInvoke(async () =>
+                    {
+                        try
+                        {
+                            List<(string Word, List<string> Suggestions)> Results = await App.Instance.SpellCheck(e.SelectionText, SpellCheckToken);
+                            if (SpellCheckToken.IsCancellationRequested) return;
+                            if (Results.Count != 0)
+                            {
+                                int InsertIndex = 0;
+                                int Count = 0;
+                                MenuItem? SuggestionsSubMenuModel = null;
+                                foreach ((string Word, List<string> Suggestions) in Results)
+                                {
+                                    foreach (string Suggestion in Suggestions)
+                                    {
+                                        MenuItem SuggestionItem = new()
+                                        {
+                                            Icon = "\uf87b",
+                                            Header = Suggestion,
+                                            Command = new RelayCommand(_ =>
+                                            {
+                                                if (WebView is ChromiumWebView ChromiumWebView)
+                                                    ((ChromiumWebBrowser)ChromiumWebView.Control).GetBrowserHost().ReplaceMisspelling(Suggestion);
+                                                else if (WebView is ChromiumEdgeWebView EdgeWebView)
+                                                    EdgeWebView.ExecuteScript(Scripts.WebView2ReplaceMisspelling.Replace("{0}", Suggestion));
+                                            })
+                                        };
+                                        if (Count < 3)
+                                            BrowserMenu.Items.Insert(InsertIndex++, SuggestionItem);
+                                        else
+                                        {
+                                            SuggestionsSubMenuModel ??= new MenuItem { Icon = "\ue82d", Header = "More" };
+                                            SuggestionsSubMenuModel.Items.Add(SuggestionItem);
+                                        }
+                                        Count++;
+                                    }
+                                }
+                                if (SuggestionsSubMenuModel != null)
+                                    BrowserMenu.Items.Insert(InsertIndex++, SuggestionsSubMenuModel);
+                                BrowserMenu.Items.Insert(InsertIndex++, new Separator());
+                            }
+                        }
+                        catch { }
+                    });
+                }
+
+                BrowserMenu.Items.Add(new MenuItem { InputGestureText = "Win+Period", Icon = "\ue76e", Header = "Emoji", Command = new RelayCommand(_ => Utils.ShowEmojiPicker()) });
+                BrowserMenu.Items.Add(new Separator());
+                BrowserMenu.Items.Add(new MenuItem { InputGestureText = "Ctrl+Z", Icon = "\ue7a7", Header = "Undo", Command = new RelayCommand(_ => WebView?.Undo()) });
+                BrowserMenu.Items.Add(new MenuItem { InputGestureText = "Ctrl+Y", Icon = "\ue7a6", Header = "Redo", Command = new RelayCommand(_ => WebView?.Redo()) });
+                BrowserMenu.Items.Add(new Separator());
+                BrowserMenu.Items.Add(new MenuItem { InputGestureText = "Ctrl+X", Icon = "\ue8c6", Header = "Cut", Command = new RelayCommand(_ => WebView?.Cut()) });
+                BrowserMenu.Items.Add(new MenuItem { InputGestureText = "Ctrl+C", Icon = "\ue8c8", Header = "Copy", Command = new RelayCommand(_ => WebView?.Copy()) });
+                BrowserMenu.Items.Add(new MenuItem { InputGestureText = "Ctrl+V", Icon = "\ue77f", Header = "Paste", Command = new RelayCommand(_ => WebView?.Paste()) });
+                BrowserMenu.Items.Add(new MenuItem { Icon = "\ue74d", Header = "Delete", Command = new RelayCommand(_ => WebView?.Delete()) });
+                BrowserMenu.Items.Add(new Separator());
+                BrowserMenu.Items.Add(new MenuItem { InputGestureText = "Ctrl+A", Icon = "\ue8b3", Header = "Select all", Command = new RelayCommand(_ => WebView?.SelectAll()) });
+                if (!string.IsNullOrEmpty(e.SelectionText.ReplaceLineEndings("").Trim()))
+                {
+                    BrowserMenu.Items.Add(new Separator());
+                    BrowserMenu.Items.Add(new MenuItem { Icon = "\uF6Fa", Header = $"Search \"{e.SelectionText.ReplaceLineEndings("").Trim().Cut(20, true)}\" in new tab", Command = new RelayCommand(_ => Tab.ParentWindow.NewTab(Utils.FixUrl(string.Format(App.Instance.DefaultSearchProvider.SearchUrl, e.SelectionText.ReplaceLineEndings("").Trim())), true, Tab.ParentWindow.TabsUI.SelectedIndex + 1, Private, Tab.TabGroup)) });
+                }
+            }
+            else if (IsPageMenu)// && e.MediaType == WebContextMenuMediaType.None)
+            {
+                StackPanel TopMenuStack = new() { Orientation = Orientation.Horizontal };
+                TopMenuStack.Children.Add(new MenuItem { IsEnabled = WebView.CanGoBack, Icon = "\uE76B", ToolTip = "Back", Command = new RelayCommand(_ => WebView?.Back()), Template = (ControlTemplate)FindResource("IconMenuItemTemplate") });
+
+                TopMenuStack.Children.Add(new MenuItem { IsEnabled = WebView.CanGoForward, Icon = "\uE76C", ToolTip = "Forward", Command = new RelayCommand(_ => WebView?.Forward()), Template = (ControlTemplate)FindResource("IconMenuItemTemplate") });
+                TopMenuStack.Children.Add(new MenuItem { Icon = "\uE72C", ToolTip = "Refresh", Command = new RelayCommand(_ => WebView?.Refresh()), Template = (ControlTemplate)FindResource("IconMenuItemTemplate") });
+                if (App.Instance.FavouriteManager.Contains(Address) != null)
+                    TopMenuStack.Children.Add(new MenuItem { Icon = "\xEB52", ToolTip = "Remove from favourites", Foreground = App.Instance.FavouriteColor, Command = new RelayCommand(_ => FavouriteAction()), Template = (ControlTemplate)FindResource("IconMenuItemTemplate") });
+                else
+                    TopMenuStack.Children.Add(new MenuItem { Icon = "\xEB51", ToolTip = "Add to favourites", Command = new RelayCommand(_ => FavouriteAction()), Template = (ControlTemplate)FindResource("IconMenuItemTemplate") });
+
+                BrowserMenu.Items.Add(new MenuItem { Template = (ControlTemplate)FindResource("EmptyMenuItemTemplate"), Focusable = false, Header = TopMenuStack });
+
+                BrowserMenu.Items.Add(new Separator());
+                BrowserMenu.Items.Add(new MenuItem { IsEnabled = !IsWPF, Icon = "\ue792", Header = "Save as", Command = new RelayCommand(_ => WebView?.SaveAs()) });
+                BrowserMenu.Items.Add(new MenuItem { IsEnabled = !IsWPF, Icon = "\uE749", Header = "Print", Command = new RelayCommand(_ => WebView?.Print()) });
+                BrowserMenu.Items.Add(new MenuItem { IsEnabled = !IsWPF, InputGestureText = "Ctrl+A", Icon = "\ue8b3", Header = "Select all", Command = new RelayCommand(_ => WebView?.SelectAll()) });
+                BrowserMenu.Items.Add(new Separator());
+
+
+                MenuItem ToolsSubMenuModel = new() { Icon = "\ue821", Header = "More tools" };
+                ToolsSubMenuModel.Items.Add(new MenuItem { Icon = "\ue72d", Header = "Share", Command = new RelayCommand(_ => Share()) });
+                ToolsSubMenuModel.Items.Add(new MenuItem { IsEnabled = !IsLoading && !IsWPF, Icon = "\uE8C1", Header = $"Translate to {TranslateComboBox.SelectedValue}", Command = new RelayCommand(_ => Translate()) });
+                ToolsSubMenuModel.Items.Add(new MenuItem { IsEnabled = !IsWPF, Icon = "\uE924", Header = "Screenshot", Command = new RelayCommand(_ => Screenshot()) });
+                BrowserMenu.Items.Add(ToolsSubMenuModel);
+
+                /*MenuItem ZoomSubMenuModel = new MenuItem { Icon = "\ue71e", Header = "Zoom" };
+                ZoomSubMenuModel.Items.Add(new MenuItem { Icon = "\ue8a3", Header = "Zoom in", Command = new RelayCommand(_ => Zoom(1)) });
+                ZoomSubMenuModel.Items.Add(new MenuItem { Icon = "\ue71f", Header = "Zoom out", Command = new RelayCommand(_ => Zoom(-1)) });
+                ZoomSubMenuModel.Items.Add(new MenuItem { Icon = "\ue72c", Header = "Reset", Command = new RelayCommand(_ => Zoom(0)) });
+                menu.Items.Add(ZoomSubMenuModel);*/
+
+                MenuItem AdvancedSubMenuModel = new() { Icon = "\uec7a", Header = "Advanced" };
+                AdvancedSubMenuModel.Items.Add(new MenuItem { Icon = "\uec7a", Header = "Inspect", Command = new RelayCommand(_ => DevTools()) });
+                AdvancedSubMenuModel.Items.Add(new MenuItem { IsEnabled = Utils.IsHttpScheme(e.FrameUrl), Icon = "\ue943", Header = "View source", Command = new RelayCommand(_ => Tab.ParentWindow.NewTab($"view-source:{e.FrameUrl}", true, Tab.ParentWindow.TabsUI.SelectedIndex + 1, Private, Tab.TabGroup)) });
+                BrowserMenu.Items.Add(AdvancedSubMenuModel);
+            }
+            BrowserMenu.PlacementTarget = WebView?.Control;
+            BrowserMenu.IsOpen = true;
+        }
+
+        private void WebView_AuthenticationRequested(object? sender, WebAuthenticationRequestedEventArgs e)
+        {
+            Application.Current.Dispatcher.Invoke(() =>
+            {
+                CredentialsDialogWindow _CredentialsDialogWindow = new($"Sign in to {Utils.FastHost(e.Url)}", "\uec19")
+                {
+                    Topmost = true
+                };
+                if (_CredentialsDialogWindow.ShowDialog().GetValueOrDefault())
+                {
+                    e.Username = _CredentialsDialogWindow.Username;
+                    e.Password = _CredentialsDialogWindow.Password;
+                }
+                else
+                    e.Cancel = true;
+            });
+        }
+
+        private CancellationTokenSource? FaviconCancellationTokenSource;
+        private async void WebView_FaviconChanged(object? sender, string e)
+        {
+            FaviconCancellationTokenSource?.Cancel();
+            FaviconCancellationTokenSource?.Dispose();
+            FaviconCancellationTokenSource = new CancellationTokenSource();
+            var Token = FaviconCancellationTokenSource.Token;
+            if (!Private)
+            {
+                (BitmapSource, bool) IconData = await App.Instance.SetIcon(WebView.IsLoading, e, Address, Private);
+                if (Token.IsCancellationRequested)
+                    return;
+                SetIcon(IconData.Item1, IconData.Item2);
+            }
+        }
+
+        public async void UnFocus()
+        {
+            OmniBoxFastTimer?.Stop();
+            OmniBoxSmartTimer?.Stop();
+            if (App.Instance.LiteMode)
+            {
+                if (WebView != null && WebView.Engine == WebEngineType.ChromiumEdge && WebView.IsBrowserInitialized)
+                {
+                    WebView?.CallDevToolsAsync("Page.setWebLifecycleState", new
+                    {
+                        state = "frozen"
+                    });
+                }
+            }
+            LastActive = DateTime.Now;
+            if (!bool.Parse(App.Instance.GlobalSave.Get("ShowUnloadProgress")))
+                App.Instance.ScheduleNextEfficientTick();
+            OpenDownloadsButton.ClosePopup();
+            SiteInformationPopupButton.ClosePopup();
+            TranslateButton.ClosePopup();
+            ExtensionsButton.CloseMenu();
+            WebEngineButtonInternal.CloseMenu();
+            OptionsButton.CloseMenu();
+            App.Instance.ExtensionManager.CloseAction();
+        }
+
+        public void ReFocus()
+        {
+            Tab.Content?.MaxHeight = Tab.ParentWindow.TabsUI.ActualHeight;
+            LastActive = DateTime.Now;
+            if (!bool.Parse(App.Instance.GlobalSave.Get("ShowUnloadProgress")))
+                App.Instance.ScheduleNextEfficientTick();
+            SetDownloadsButtonVisibility();
+            UpdateDownloadsButtonForeground();
+            if (Tab.IsUnloaded)
+            {
+                InitializeBrowserComponent();
+                if (Address.StartsWith("slbr://") && App.CustomPageOverlays.TryGetValue(Utils.FastHost(Address), out Type OverlayType))
+                {
+                    WebView?.Control?.Visibility = Visibility.Collapsed;
+                    if (PageOverlay != null && PageOverlay.GetType() != OverlayType)
+                    {
+                        CoreContainer.Children.Remove(PageOverlayControl);
+                        PageOverlay?.Dispose();
+                        PageOverlay = null;
+                    }
+                    if (PageOverlay == null)
+                    {
+                        PageOverlay = (IPageOverlay)Activator.CreateInstance(OverlayType)!;
+                        PageOverlay.Initialize(this);
+                        CoreContainer.Children.Add(PageOverlayControl);
+                    }
+                    PageOverlayControl?.Visibility = Visibility.Visible;
+                }
+                else
+                {
+                    WebView?.Control?.Visibility = Visibility.Visible;
+                    if (PageOverlay != null)
+                    {
+                        CoreContainer.Children.Remove(PageOverlayControl);
+                        PageOverlay?.Dispose();
+                        PageOverlay = null;
+                    }
+                }
+            }
+            else
+            {
+                //Looks like both Chromium engines have issues now
+                if (WebView?.Engine == WebEngineType.ChromiumEdge)
+                {
+                    //Warning: WebView2 somehow forgets the auto dark mode after a while
+                    SetDarkMode(App.Instance.CurrentTheme.DarkWebPage);
+                    //if (WebView2DevToolsHWND != IntPtr.Zero)
+                    //    UpdateDevToolsPosition();
+                    if (App.Instance.LiteMode && WebView != null && WebView.IsBrowserInitialized)
+                    {
+                        WebView?.CallDevToolsAsync("Page.setWebLifecycleState", new
+                        {
+                            state = "active"
+                        });
+                    }
+                }
+                else if (WebView?.Engine == WebEngineType.Chromium)
+                    SetDarkMode(App.Instance.CurrentTheme.DarkWebPage);
+            }
+        }
+
+        public async void LimitNetwork(int LatencyMs, double DownloadLimitMbps, double UploadLimitMbps)
+        {
+            //DevToolsClient _DevToolsClient = Chromium.GetDevToolsClient();
+            //_DevToolsClient.Network.EnableAsync();
+            await WebView?.CallDevToolsAsync("Network.enable");
+            //_DevToolsClient.Network.EmulateNetworkConditionsAsync(false, LatencyMs, DownloadThroughput, UploadThroughput, CefSharp.DevTools.Network.ConnectionType.Wifi);
+            // Mbps to bytes per second
+
+            //TODO: Switch to Network.emulateNetworkConditionsByRule for https://issues.chromium.org/issues/40434685
+            //Network.emulateNetworkConditions is going to be deprecated
+            await WebView?.CallDevToolsAsync("Network.emulateNetworkConditions", new
+            {
+                offline = false,
+                latency = LatencyMs,
+                downloadThroughput = DownloadLimitMbps * 125000,
+                uploadThroughput = UploadLimitMbps * 125000,
+                connectionType = "wifi",
+            });
+        }
+
+        bool IsCustomTheme = false;
+
+        WebAppManifest? CurrentWebAppManifest;
+        string CurrentWebAppManifestUrl;
+
+        public async Task<(bool Installable, string ManifestUrl)> IsInstallableAsync()
+        {
+            if (WebView != null && WebView.CanExecuteJavascript)
+            {
+                try
+                {
+                    string? Response = (await WebView.EvaluateScriptAsync(Scripts.DetectPWA)).ToString();
+                    if (string.IsNullOrEmpty(Response))
+                        return (false, string.Empty);
+
+                    using JsonDocument Document = JsonDocument.Parse(Response);
+                    string Manifest = Document.RootElement.GetProperty("manifest").GetString();
+                    bool ServiceWorker = Document.RootElement.GetProperty("service_worker").GetBoolean();
+
+                    return (!string.IsNullOrEmpty(Manifest) && ServiceWorker, Manifest);
+                }
+                catch { }
+            }
+            return (false, string.Empty);
+        }
+
+        public DateTime LastActive = DateTime.Now;
+        public DateTime NextUnloadTime => LastActive.AddMinutes(App.Instance.GCTimerDuration);
+        public bool CanUnload()
+        {
+            return !Tab.IsUnloaded && DateTime.Now >= NextUnloadTime && (Muted || !AudioPlaying) && WebView != null && WebView.IsBrowserInitialized;
+        }
+
+        public async Task<bool> IsArticle()
+        {
+            if (WebView != null && WebView.IsBrowserInitialized && WebView.CanExecuteJavascript)
+            {
+                try
+                {
+                    bool? Response = (bool?)await WebView?.EvaluateScriptAsync(Scripts.ArticleScript);
+                    if (Response != null)
+                        return Response.Value;
+                }
+                catch { return false; }
+            }
+            return false;
+        }
+
+        private void AdBlockToggleButton_Click(object sender, RoutedEventArgs e)
+        {
+            string Host = Utils.FastHost(Address);
+            if (AdBlockToggleButton.IsChecked.GetValueOrDefault())
+                App.Instance._AdBlockHandler.Whitelist.Remove(Host);
+            else
+                App.Instance._AdBlockHandler.Whitelist.Add(Host);
+        }
+
+        async void BrowserLoadChanged(string Address, bool? IsLoading = null, int? StatusCode = null)
+        {
+            OmniBox.Tag = Address;
+            if (IsOmniBoxModifiable())
+            {
+                if (Address.StartsWith("slbr://newtab"))
+                {
+                    OmniBoxPlaceholder.Visibility = Visibility.Visible;
+                    OmniBoxText = string.Empty;
+                    OmniBox.Text = string.Empty;
+                }
+                else
+                {
+                    OmniBoxPlaceholder.Visibility = Visibility.Hidden;
+                    OmniBoxText = Address;
+                    OmniBox.Text = Address;
+                }
+                OmniBoxIsDropdown = false;
+                SetOverlayDisplay(App.Instance.TrimURL, App.Instance.HomographProtection);
+                if (OmniBoxOverrideSearch != null)
+                {
+                    OmniBoxStatus.Visibility = Visibility.Collapsed;
+                    OmniBoxOverrideSearch = null;
+                    SetTemporarySiteInformation();
+                }
+            }
+            if (App.Instance.FavouriteManager.Contains(Address) != null)
+            {
+                FavouriteButton.Content = "\xEB52";
+                FavouriteButton.Foreground = App.Instance.FavouriteColor;
+                FavouriteButton.ToolTip = "Remove from favourites";
+                Tab.FavouriteCommandHeader = "Remove from favourites";
+            }
+            else
+            {
+                FavouriteButton.Content = "\xEB51";
+                FavouriteButton.Foreground = (SolidColorBrush)FindResource("FontBrush");
+                FavouriteButton.ToolTip = "Add to favourites";
+                Tab.FavouriteCommandHeader = "Add to favourites";
+            }
+
+            if (Address.StartsWith("slbr://") && App.CustomPageOverlays.TryGetValue(Utils.FastHost(Address), out Type OverlayType))
+            {
+                WebView?.Control?.Visibility = Visibility.Collapsed;
+                if (PageOverlay != null && PageOverlay.GetType() != OverlayType)
+                {
+                    CoreContainer.Children.Remove(PageOverlayControl);
+                    PageOverlay?.Dispose();
+                    PageOverlay = null;
+                }
+                if (WebView != null && WebView.IsBrowserInitialized)
+                {
+                    if (PageOverlay == null)
+                    {
+                        PageOverlay = (IPageOverlay)Activator.CreateInstance(OverlayType)!;
+                        PageOverlay.Initialize(this);
+                        //TODO: Apply individual tab theme.
+                        //PageOverlay.ApplyTheme();
+                        CoreContainer.Children.Add(PageOverlayControl);
+                    }
+                    PageOverlayControl?.Visibility = Visibility.Visible;
+                    //TODO: Resolve jittering issue on settings tab navigation.
+                    PageOverlay?.OnNavigated();
+                    //WARNING: Intentional, allows navigation.
+                }
+            }
+            else
+            {
+                WebView?.Control?.Visibility = Visibility.Visible;
+                if (PageOverlay != null)
+                {
+                    CoreContainer.Children.Remove(PageOverlayControl);
+                    PageOverlay?.Dispose();
+                    PageOverlay = null;
+                }
+            }
+            bool IsHTTP = Utils.IsHttpScheme(Address);
+            string Host = Utils.FastHost(Address);
+            if (IsHTTP && App.Instance.AdBlock != 0)
+            {
+                AdBlockHostText.Text = Host;
+                AdBlockToggleButton.IsChecked = !App.Instance._AdBlockHandler.Whitelist.Contains(Host);
+                AdBlockContainer.Visibility = Visibility.Visible;
+            }
+            else
+                AdBlockContainer.Visibility = Visibility.Collapsed;
+            Translated = false;
+            IsReaderMode = false;
+            if (IsLoading != null)
+            {
+                SiteInformationIcon.FontFamily = App.Instance.IconFont;
+                SiteInformationPopupIcon.FontFamily = App.Instance.IconFont;
+                LoadingStoryboard = SiteInformationIcon.FindResource("LoadingAnimation") as Storyboard;
+                bool IsLoadingBool = IsLoading.GetValueOrDefault();
+                if (App.Instance.AllowTranslateButton)
+                    TranslateButton.IsEnabled = !IsLoadingBool;
+                if (!IsLoadingBool)
+                {
+                    string SetSiteInfo = string.Empty;
+                    if (WebViewManager.OverrideRequests.TryGetValue(Address, out RequestOverrideItem Item))
+                    {
+                        if (Item.Error != -1)
+                        {
+                            if (Item.Error == 15)
+                                SetSiteInfo = "Bill";
+                            else
+                                SetSiteInfo = "Danger";
+                        }
+                    }
+                    if (string.IsNullOrEmpty(SetSiteInfo))
+                    {
+                        SiteInformationCertificate.Visibility = Visibility.Collapsed;
+                        CertificateInfo.Visibility = Visibility.Collapsed;
+                        if (IsHTTP)
+                        {
+                            if (WebView != null && WebView.IsBrowserInitialized)
+                            {
+                                if (WebView.IsSecure)
+                                {
+                                    SiteInformationCertificate.Visibility = Visibility.Visible;
+                                    SetSiteInfo = "Secure";
+                                    if (StatusCode == 418)
+                                        SetSiteInfo = "Teapot";
+                                    if (WebView is ChromiumWebView ChromiumView)
+                                    {
+                                        NavigationEntry _NavigationEntry = await ((ChromiumWebBrowser)ChromiumView.Control).GetVisibleNavigationEntryAsync();
+                                        if (_NavigationEntry != null)
+                                        {
+                                            /*if (_NavigationEntry.HttpStatusCode == 0)
+                                            {
+                                                WebView?.Stop();
+                                                WebView?.Navigate(WebView?.Address);
+                                                return;
+                                            }*/
+
+                                            CertificateValidation.Text = _NavigationEntry.SslStatus.IsSecureConnection ? "Certificate is valid" : "Certificate is invalid";
+                                            SslStatus _SSL = _NavigationEntry.SslStatus;
+                                            if (_SSL.X509Certificate != null)
+                                            {
+                                                CertificateInfo.Visibility = Visibility.Visible;
+                                                var IssuedTo = Utils.ParseCertificateIssue(_SSL.X509Certificate.Subject);
+                                                IssueToCommonName.Text = IssuedTo.Item1;
+                                                IssueToCompany.Text = IssuedTo.Item2;
+                                                var IssuedBy = Utils.ParseCertificateIssue(_SSL.X509Certificate.Issuer);
+                                                IssueByCommonName.Text = IssuedBy.Item1;
+                                                IssueByCompany.Text = IssuedBy.Item2;
+                                                CertificateStart.Text = _SSL.X509Certificate.NotBefore.Date.ToShortDateString();
+                                                CertificateEnd.Text = _SSL.X509Certificate.NotAfter.Date.ToShortDateString();
+                                            }
+                                        }
+                                    }
+                                }
+                                else
+                                    SetSiteInfo = "Insecure";
+                            }
+                            else
+                            {
+                                if (Address.StartsWith("https:"))
+                                    SetSiteInfo = "Secure";
+                                else
+                                    SetSiteInfo = "Insecure";
+                            }
+                        }
+                        else
+                        {
+                            if (Address.StartsWith("file:"))
+                                SetSiteInfo = "File";
+                            else if (Address.StartsWith("slbr:"))
+                                SetSiteInfo = "SLBr";
+                            else if (Address.StartsWith("view-source:"))
+                                SetSiteInfo = "Source";
+                            else if (Address.StartsWith("chrome-extension:"))
+                                SetSiteInfo = "Extension";
+                            else
+                                SetSiteInfo = "Protocol";
+                        }
+                    }
+                    switch (SetSiteInfo)
+                    {
+                        case "Secure":
+                            SiteInformationIcon.Text = "\xE72E";
+                            SiteInformationIcon.Foreground = App.Instance.LimeGreenColor;
+                            SiteInformationText.Text = "Secure";
+                            TranslateButton.Visibility = !Private && App.Instance.AllowTranslateButton ? Visibility.Visible : Visibility.Collapsed;
+                            SiteInformationPopupText.Text = $"Connection is secure";
+                            break;
+                        case "Insecure":
+                            SiteInformationIcon.Text = "\xE785";
+                            SiteInformationIcon.Foreground = App.Instance.RedColor;
+                            SiteInformationText.Text = "Insecure";
+                            TranslateButton.Visibility = !Private && App.Instance.AllowTranslateButton ? Visibility.Visible : Visibility.Collapsed;
+                            SiteInformationPopupText.Text = $"Connection is insecure";
+                            break;
+                        case "File":
+                            SiteInformationIcon.Text = "\xE8B7";
+                            SiteInformationIcon.Foreground = App.Instance.NavajoWhiteColor;
+                            SiteInformationText.Text = "File";
+                            TranslateButton.Visibility = !Private && App.Instance.AllowTranslateButton ? Visibility.Visible : Visibility.Collapsed;
+                            SiteInformationPopupText.Text = "Local or shared file";
+                            SiteInformationCertificate.Visibility = Visibility.Collapsed;
+                            break;
+                        case "SLBr":
+                            SiteInformationIcon.Text = "\u2603";
+                            SiteInformationIcon.FontFamily = App.Instance.SLBrFont;
+                            SiteInformationIcon.Foreground = App.Instance.SLBrColor;
+                            SiteInformationText.Text = "SLBr";
+                            TranslateButton.Visibility = Visibility.Collapsed;
+                            SiteInformationPopupText.Text = "Secure SLBr page";
+                            SiteInformationCertificate.Visibility = Visibility.Collapsed;
+                            break;
+                        case "Danger":
+                            SiteInformationIcon.Text = "\xE730";
+                            SiteInformationIcon.Foreground = App.Instance.RedColor;
+                            SiteInformationText.Text = "Danger";
+                            TranslateButton.Visibility = !Private && App.Instance.AllowTranslateButton ? Visibility.Visible : Visibility.Collapsed;
+                            SiteInformationPopupText.Text = "Dangerous site";
+                            SiteInformationCertificate.Visibility = Visibility.Collapsed;
+                            break;
+                        case "Bill":
+                            SiteInformationIcon.Text = "\xe7ba";
+                            SiteInformationIcon.Foreground = App.Instance.RedColor;
+                            SiteInformationText.Text = "Danger";
+                            TranslateButton.Visibility = !Private && App.Instance.AllowTranslateButton ? Visibility.Visible : Visibility.Collapsed;
+                            SiteInformationPopupText.Text = "Deceptive billing site";
+                            SiteInformationCertificate.Visibility = Visibility.Collapsed;
+                            break;
+                        case "Protocol":
+                            SiteInformationIcon.Text = "\xE774";
+                            SiteInformationIcon.Foreground = App.Instance.CornflowerBlueColor;
+                            SiteInformationText.Text = "Protocol";
+                            TranslateButton.Visibility = !Private && App.Instance.AllowTranslateButton ? Visibility.Visible : Visibility.Collapsed;
+                            SiteInformationPopupText.Text = "Network protocol";
+                            SiteInformationCertificate.Visibility = Visibility.Collapsed;
+                            break;
+                        case "Source":
+                            SiteInformationIcon.Text = "\xe943";
+                            SiteInformationIcon.Foreground = (SolidColorBrush)FindResource("FontBrush");
+                            SiteInformationText.Text = "Source";
+                            TranslateButton.Visibility = !Private && App.Instance.AllowTranslateButton ? Visibility.Visible : Visibility.Collapsed;
+                            SiteInformationPopupText.Text = "Page source";
+                            SiteInformationCertificate.Visibility = Visibility.Collapsed;
+                            break;
+                        case "Extension":
+                            SiteInformationIcon.Text = "\xEA86";
+                            SiteInformationIcon.Foreground = (SolidColorBrush)FindResource("FontBrush");
+                            SiteInformationText.Text = "Extension";
+                            TranslateButton.Visibility = !Private && App.Instance.AllowTranslateButton ? Visibility.Visible : Visibility.Collapsed;
+                            SiteInformationPopupText.Text = "Extension";
+                            SiteInformationCertificate.Visibility = Visibility.Collapsed;
+                            break;
+                        case "Teapot":
+                            SiteInformationIcon.Text = "\xEC32";
+                            SiteInformationIcon.Foreground = (SolidColorBrush)FindResource("FontBrush");
+                            SiteInformationText.Text = "Teapot";
+                            TranslateButton.Visibility = !Private && App.Instance.AllowTranslateButton ? Visibility.Visible : Visibility.Collapsed;
+                            SiteInformationPopupText.Text = "I'm a teapot";
+                            break;
+                    }
+                    SiteInformationPopupIcon.Text = SiteInformationIcon.Text;
+                    SiteInformationPopupIcon.Foreground = SiteInformationIcon.Foreground;
+                    SiteInformationPopupIcon.FontFamily = SiteInformationIcon.FontFamily;
+                    LoadingStoryboard?.Seek(TimeSpan.Zero);
+                    LoadingStoryboard?.Stop();
+                    if (App.Instance.AllowReaderModeButton && IsHTTP)
+                        ReaderModeButton.Visibility = (await IsArticle()) ? Visibility.Visible : Visibility.Collapsed;
+                    else
+                        ReaderModeButton.Visibility = Visibility.Collapsed;
+                    SiteInformationPopupButton.IsEnabled = true;
+                    //TODO: Investigate relocation to Unfocus for optimization.
+                    if (App.Instance.TabPreview && WebView != null && WebView.IsBrowserInitialized && Tab.Preview == null && WebView?.Control?.Visibility != Visibility.Collapsed && Tab == Tab.ParentWindow.GetTab())
+                    {
+                        BitmapImage _BitmapImage = new();
+                        //WARNING: Do not move, prevents duplicate captures caused by async race condition.
+                        Tab.Preview = _BitmapImage;
+                        using (MemoryStream Stream = new(await WebView.TakeScreenshotAsync(WebScreenshotFormat.JPEG, new Rect(0, 0, (int)CoreContainerSizeEmulator.ActualWidth, (int)CoreContainerSizeEmulator.ActualHeight))))
+                        {
+                            _BitmapImage.BeginInit();
+                            _BitmapImage.DecodePixelWidth = 275;
+                            _BitmapImage.CacheOption = BitmapCacheOption.OnLoad;
+                            //_BitmapImage.CreateOptions = BitmapCreateOptions.DelayCreation;
+                            _BitmapImage.StreamSource = Stream;
+                            _BitmapImage.EndInit();
+                            _BitmapImage.SafeFreeze();
+                        }
+                        SetDarkMode(App.Instance.CurrentTheme.DarkWebPage);
+                        //WARNING: Prevents undesirable behaviour in CefSharp subsequent to capture.
+                        if (WebView is ChromiumWebView ChromiumView)
+                        {
+                            ChromiumView.Browser.Height = CoreContainerSizeEmulator.ActualHeight + 1;
+                            await Dispatcher.InvokeAsync(() =>
+                            {
+                                ChromiumView.Browser.ClearValue(HeightProperty);
+                                //ChromiumView.Browser.GetBrowser()?.GetHost()?.WasResized();
+                            }, DispatcherPriority.Render);
+                        }
+                    }
+                }
+                else if (SiteInformationText.Text != "Loading")
+                {
+                    SiteInformationIcon.Text = "\xF16A";
+                    SiteInformationIcon.Foreground = (SolidColorBrush)FindResource("FontBrush");
+                    SiteInformationText.Text = "Loading";
+                    LoadingStoryboard?.Begin();
+                    SiteInformationPopupButton.IsEnabled = false;
+                }
+                //https://github.com/brave/brave-core/blob/master/components/brave_wayback_machine/brave_wayback_machine_tab_helper.cc
+                if (WaybackInfoBar == null && StatusCode is 404 or 408 or 410 or 451 or 500 or 502 or 503 or 504 or 509 or 520 or 521 or 523 or 524 or 525 or 526 && Host != "web.archive.org" && bool.Parse(App.Instance.GlobalSave.Get("WaybackInfoBar")))
+                {
+                    _ = Dispatcher.BeginInvoke(async () =>
+                    {
+                        WaybackInfoBar = new()
+                        {
+                            Icon = "\xf384",
+                            IconForeground = App.Instance.OrangeColor,
+                            Title = "Page Missing",
+                            Description = [new() { Text = "Do you want to check if a snapshot is available on the Wayback Machine?" }],
+                            Actions = [
+                                new() { Text = "Check", Background = (SolidColorBrush)FindResource("IndicatorBrush"), Foreground = App.Instance.WhiteColor, Command = new RelayCommand(async () => {
+                                    WaybackInfoBar.Actions[0].IsEnabled = false;
+                                    WaybackInfoBar.Actions[0].Text = "Checking";
+                                    WaybackInfoBar.Actions[0].Background = App.Instance.OrangeColor;
+                                    try
+                                    {
+                                        //TODO: Implement http://web.archive.org/cdx/search/cdx?url=archive.org&output=json&limit=1 fallback.
+                                        //https://github.com/internetarchive/wayback/blob/master/wayback-cdx-server/README.md
+                                        string Json = await App.MiniHttpClient.GetStringAsync($"https://brave-api.archive.org/wayback/available?url={Address}");
+                                        CloseInfoBar(WaybackInfoBar);
+                                        using JsonDocument Document = JsonDocument.Parse(Json);
+                                        if (Document.RootElement.TryGetProperty("archived_snapshots", out JsonElement Snapshots) && Snapshots.TryGetProperty("closest", out JsonElement Closest) && Closest.TryGetProperty("available", out JsonElement Available) && Available.GetBoolean() && Closest.TryGetProperty("url", out var Url))
+                                            Navigate(Url.GetString());
+                                    }
+                                    catch { CloseInfoBar(WaybackInfoBar); }
+                                }) },
+                                new() { Text = "Do not ask again", Command = new RelayCommand(async () => {
+                                    CloseInfoBar(WaybackInfoBar);
+                                    App.Instance.GlobalSave.Set("WaybackInfoBar", false);
+                                }) }
+                            ]
+                        };
+                        LocalInfoBars.Add(WaybackInfoBar);
+                    });
+                }
+            }
+        }
+
+        private string PAddress;
+        public string Address
+        {
+            get
+            {
+                if (WebView != null && WebView.IsBrowserInitialized)
+                    PAddress = WebView?.Address;
+                return PAddress;
+            }
+            set
+            {
+                PAddress = value;
+                WebView?.Address = value;
+            }
+        }
+        private string PTitle;
+        public string Title
+        {
+            get
+            {
+                if (WebView != null)
+                    PTitle = WebView?.Title != null && WebView?.Title.Trim().Length > 0 ? WebView?.Title : Utils.CleanUrl(Address);
+                return PTitle;
+            }
+            set => PTitle = value;
+        }
+        public bool CanGoBack => WebView?.CanGoBack ?? false;
+        public bool CanGoForward => WebView?.CanGoForward ?? false;
+        public bool IsLoading => WebView?.IsLoading ?? false;
+
+        public void Unload()
+        {
+            if (Tab.IsUnloaded)
+                return;
+            SetAudioState(false);
+            if (bool.Parse(App.Instance.GlobalSave.Get("ShowUnloadedIcon")))
+            {
+                Tab.SubIcon = "\uec0a";
+                Tab.SubIconForeground = App.Instance.GreenColor;
+            }
+            DisposeBrowserCore();
+            Tab.IsUnloaded = true;
+            Tab.ProgressBarVisibility = Visibility.Collapsed;
+            Tab.Preview = null;
+        }
+        private void Browser_GotFocus(object sender, RoutedEventArgs e)
+        {
+            ReFocus();
+        }
+
+        public void Back()
+        {
+            if (!CanGoBack)
+                return;
+            WebView?.Back();
+        }
+        public void Forward()
+        {
+            if (!CanGoForward)
+                return;
+            WebView?.Forward();
+        }
+        public void Refresh(bool IgnoreCache = false, bool ClearCache = false)
+        {
+            if (!IsLoading)
+                WebView?.Refresh(IgnoreCache, ClearCache);
+            else
+                Stop();
+        }
+        public void Stop()
+        {
+            WebView?.Stop();
+        }
+
+        public void Share(string? Url = null) =>
+            Utils.Share(WebView, Url == null && Title.Length != 0 ? Title : "Shared link", Url ?? Address);
+
+        public async void Find(string Text, bool Forward = true, bool FindNext = false)
+        {
+            if (WebView == null)
+                return;
+            if (string.IsNullOrEmpty(Text))
+            {
+                try
+                {
+                    var Response = (await WebView?.EvaluateScriptAsync("window.getSelection().toString();") ?? "").ToString();
+                    if (Response != null)
+                        Text = Response.Trim('"');
+                }
+                catch { }
+            }
+            Text = Text.ReplaceLineEndings("");
+            FindPopup.IsOpen = true;
+            FindTextBox.Text = Text;
+            DllUtils.SetForegroundWindow(((HwndSource)PresentationSource.FromVisual(FindPopup.Child)).Handle);
+            Keyboard.Focus(FindTextBox);
+            FindPopup.Focus();
+            PreviousFindButton.IsEnabled = Text.Length > 0;
+            NextFindButton.IsEnabled = Text.Length > 0;
+            WebView?.Find(Text, Forward, false, FindNext);
+        }
+
+        private void FindButton_Click(object sender, RoutedEventArgs e)
+        {
+            string Value = ((Button)sender).ToolTip.ToString()!;
+            if (Value == "Close")
+                StopFind();
+            else if (Value == "Previous")
+                Find(FindTextBox.Text, false, true);
+            else if (Value == "Next")
+                Find(FindTextBox.Text, true, true);
+        }
+
+        private void FindTextBox_KeyUp(object sender, KeyEventArgs e)
+        {
+            if (FindTextBox.Text.Trim().Length > 0)
+            {
+                if (e.Key == Key.Return)
+                    Find(FindTextBox.Text, true, true);
+                else
+                    Find(FindTextBox.Text);
+                PreviousFindButton.IsEnabled = true;
+                NextFindButton.IsEnabled = true;
+            }
+            else
+            {
+                PreviousFindButton.IsEnabled = false;
+                NextFindButton.IsEnabled = false;
+                WebView?.StopFind();
+            }
+        }
+
+        private void FindTextBox_GotKeyboardFocus(object sender, KeyboardFocusChangedEventArgs e)
+        {
+            DllUtils.SetForegroundWindow(((HwndSource)PresentationSource.FromVisual(FindPopup.Child)).Handle);
+            Keyboard.Focus(FindTextBox);
+            FindPopup.Focus();
+        }
+
+        public void StopFind()
+        {
+            FindPopup.IsOpen = false;
+            WebView?.StopFind();
+        }
+        public void Navigate(string Url)
+        {
+            Address = Url;
+        }
+
+        bool ActiveSizeEmulation;
+        private void SizeEmulator()
+        {
+            SizeEmulatorColumn1.Width = new GridLength(0);
+            SizeEmulatorColumn2.Width = new GridLength(0);
+            SizeEmulatorRow1.Height = new GridLength(0);
+            SizeEmulatorRow2.Height = new GridLength(0);
+            SizeEmulatorColumnSplitter1.Visibility = ActiveSizeEmulation ? Visibility.Collapsed : Visibility.Visible;
+            SizeEmulatorColumnSplitter2.Visibility = ActiveSizeEmulation ? Visibility.Collapsed : Visibility.Visible;
+            SizeEmulatorRowSplitter1.Visibility = ActiveSizeEmulation ? Visibility.Collapsed : Visibility.Visible;
+            SizeEmulatorRowSplitter2.Visibility = ActiveSizeEmulation ? Visibility.Collapsed : Visibility.Visible;
+            ActiveSizeEmulation = !ActiveSizeEmulation;
+        }
+        private static void OpenAsPopupBrowser(string Url)
+        {
+            new PopupBrowser(Url, -1, -1).Show();
+        }
+        private void SetSideBarDock(int DockID)
+        {
+            SideBarColumnLeft.Width = new GridLength(0);
+            SideBarColumnRight.Width = new GridLength(0);
+            SideBarRowBottom.Height = new GridLength(0);
+            SideBarRowTop.Height = new GridLength(0);
+            if (IsLoaded)
+            {
+                SideBarRowSplitterBottom.Visibility = Visibility.Collapsed;
+                SideBarRowSplitterTop.Visibility = Visibility.Collapsed;
+                SideBarColumnSplitterLeft.Visibility = Visibility.Collapsed;
+                SideBarColumnSplitterRight.Visibility = Visibility.Collapsed;
+            }
+            if (!IsInitialized)
+                DockID = 0;
+            switch (DockID)
+            {
+                case 0://RIGHT
+                    if (IsLoaded)
+                        SideBarColumnSplitterRight.Visibility = Visibility.Visible;
+                    Grid.SetColumn(SideBar, 2);
+                    Grid.SetRow(SideBar, 1);
+                    SideBarColumnRight.MinWidth = 200;
+                    SideBarColumnRight.Width = new GridLength(500);
+                    SideBarColumnLeft.MinWidth = 0;
+                    SideBarRowTop.MinHeight = 0;
+                    SideBarRowBottom.MinHeight = 0;
+                    SideBar.BorderThickness = new Thickness(1, 0, 0, 0);
+                    break;
+                case 1://LEFT
+                    if (IsLoaded)
+                        SideBarColumnSplitterLeft.Visibility = Visibility.Visible;
+                    Grid.SetColumn(SideBar, 0);
+                    Grid.SetRow(SideBar, 1);
+                    SideBarColumnLeft.MinWidth = 200;
+                    SideBarColumnLeft.Width = new GridLength(500);
+                    SideBarColumnRight.MinWidth = 0;
+                    SideBarRowTop.MinHeight = 0;
+                    SideBarRowBottom.MinHeight = 0;
+                    SideBar.BorderThickness = new Thickness(0, 0, 1, 0);
+                    break;
+                case 2://BOTTOM
+                    if (IsLoaded)
+                        SideBarRowSplitterBottom.Visibility = Visibility.Visible;
+                    Grid.SetColumn(SideBar, 1);
+                    Grid.SetRow(SideBar, 2);
+                    SideBarRowBottom.MinHeight = 200;
+                    SideBarRowBottom.Height = new GridLength(350);
+                    SideBarRowTop.MinHeight = 0;
+                    SideBarColumnLeft.MinWidth = 0;
+                    SideBarColumnRight.MinWidth = 0;
+                    SideBar.BorderThickness = new Thickness(0, 1, 0, 0);
+                    break;
+                case 3://TOP
+                    if (IsLoaded)
+                        SideBarRowSplitterTop.Visibility = Visibility.Visible;
+                    Grid.SetColumn(SideBar, 1);
+                    Grid.SetRow(SideBar, 0);
+                    SideBarRowTop.MinHeight = 200;
+                    SideBarRowTop.Height = new GridLength(350);
+                    SideBarRowBottom.MinHeight = 0;
+                    SideBarColumnLeft.MinWidth = 0;
+                    SideBarColumnRight.MinWidth = 0;
+                    SideBar.BorderThickness = new Thickness(0, 0, 0, 1);
+                    break;
+            }
+            if (!IsInitialized)
+            {
+                SideBarColumnRight.MinWidth = 0;
+                SideBarColumnRight.Width = new GridLength(0);
+            }
+        }
+
+        bool IsUtilityContainerOpen;
+        IWindowInfo SideBarWindowInfo;
+        public HwndHoster DevToolsHost;
+        public IntPtr WebView2DevToolsHWND = IntPtr.Zero;
+        public void ToggleSideBar(bool ForceClose = false)
+        {
+            DevToolsToolBar.Visibility = Visibility.Collapsed;
+            if (IsUtilityContainerOpen || ForceClose)
+            {
+                SideBarColumnLeft.MinWidth = 0;
+                SideBarColumnRight.MinWidth = 0;
+                SideBarRowBottom.MinHeight = 0;
+                SideBarRowTop.MinHeight = 0;
+                SideBarColumnLeft.Width = new GridLength(0);
+                SideBarColumnRight.Width = new GridLength(0);
+                SideBarRowBottom.Height = new GridLength(0);
+                SideBarRowTop.Height = new GridLength(0);
+                if (IsUtilityContainerOpen)
+                {
+                    SideBarCoreContainer.Children.Clear();
+                    _NewsFeed = null;
+                    if (WebView2DevToolsHWND != IntPtr.Zero)
+                    {
+                        App.Instance.WebView2DevTools.Remove(WebView2DevToolsHWND);
+                        DllUtils.PostMessage(WebView2DevToolsHWND, DllUtils.WM_CLOSE, IntPtr.Zero, IntPtr.Zero);
+                        WebView2DevToolsHWND = IntPtr.Zero;
+                    }
+                    if (DevToolsHost != null)
+                    {
+                        if (WebView is ChromiumWebView ChromiumView)
+                            ((ChromiumWebBrowser)ChromiumView.Control)?.BrowserCore.CloseDevTools();
+                        DevToolsHost.Dispose();
+                        DevToolsHost = null;
+                    }
+                    SideBarWindowInfo?.Dispose();
+                    SideBarWindowInfo = null;
+                    IsUtilityContainerOpen = false;
+                }
+            }
+            else
+            {
+                SetSideBarDock(3 - SideBarDockDropdown.SelectedIndex);
+                IsUtilityContainerOpen = true;
+            }
+            UpdatePopupPlacement(FindPopup);
+            SideBar.Visibility = IsUtilityContainerOpen ? Visibility.Visible : Visibility.Collapsed;
+        }
+
+        public void DevTools(bool ForceClose = false, int XCoord = 0, int YCoord = 0)
+        {
+            if (!ForceClose)
+            {
+                if (IsUtilityContainerOpen && (_NewsFeed != null || DevToolsHost != null))
+                {
+                    ToggleSideBar(ForceClose);
+                    return;
+                }
+                if (WebView == null || Tab.ParentWindow.IsFullscreen)
+                    return;
+                if (WebView?.Engine == WebEngineType.Trident)
+                {
+                    if (UnavailableInspectorInfoBar == null)
+                    {
+                        UnavailableInspectorInfoBar = new() { Title = "Inspector Unavailable", Description = [new() { Text = "Trident webview does not support an inspector tool." }] };
+                        LocalInfoBars.Add(UnavailableInspectorInfoBar);
+                    }
+                    return;
+                }
+            }
+            ToggleSideBar(ForceClose);
+            if (IsUtilityContainerOpen)
+            {
+                DevToolsToolBar.Visibility = Visibility.Visible;
+                DevToolsHost = new();
+                SideBarCoreContainer.Children.Add(DevToolsHost);
+                Grid.SetColumn(DevToolsHost, 1);
+                Grid.SetRow(DevToolsHost, 1);
+
+                DevToolsHost.HorizontalAlignment = HorizontalAlignment.Stretch;
+                DevToolsHost.VerticalAlignment = VerticalAlignment.Stretch;
+
+                DevToolsHost.Loaded += (s, args) =>
+                {
+                    if (DevToolsHost != null)
+                    {
+                        if (WebView is ChromiumWebView ChromiumView)
+                        {
+                            SideBarWindowInfo = WindowInfo.Create();
+                            SideBarWindowInfo.SetAsChild(DevToolsHost.Handle);
+                            ((ChromiumWebBrowser)ChromiumView.Control)?.BrowserCore?.ShowDevTools(SideBarWindowInfo, XCoord, YCoord);
+                        }
+                        else if (WebView is ChromiumEdgeWebView EdgeWebView)
+                        {
+                            Dispatcher.BeginInvoke(async () =>
+                            {
+                                if (EdgeWebView.BrowserCore != null)
+                                {
+                                    EdgeWebView.BrowserCore.OpenDevToolsWindow();
+                                    await Task.Delay(600);
+                                    string DevToolsName = $"DevTools - {Utils.CleanUrl(Address, false, false, false, false, true)}";
+                                    DllUtils.EnumWindows((hWnd, lParam) =>
+                                    {
+                                        DllUtils.GetWindowThreadProcessId(hWnd, out uint pid);
+                                        Process _Process = Process.GetProcessById((int)pid);
+                                        if (_Process.ProcessName.Contains("msedgewebview2", StringComparison.OrdinalIgnoreCase))
+                                        {
+                                            if (DllUtils.IsWindowVisible(hWnd) && !App.Instance.WebView2DevTools.Contains(hWnd) && DevToolsName.StartsWith(DllUtils.GetWindowTextRaw(hWnd)))
+                                            {
+                                                WebView2DevToolsHWND = hWnd;
+                                                return false;
+                                            }
+                                        }
+                                        return true;
+                                    }, IntPtr.Zero);
+
+                                    //NOTE: DevToolsHost safeguard, do not remove.
+                                    if (WebView2DevToolsHWND != IntPtr.Zero && DevToolsHost != null)
+                                    {
+                                        App.Instance.WebView2DevTools.Add(WebView2DevToolsHWND);
+
+                                        int DevToolsWindowStyle = DllUtils.GetWindowLong(WebView2DevToolsHWND, DllUtils.GWL_STYLE);
+                                        DevToolsWindowStyle &= ~(DllUtils.WS_POPUP | DllUtils.WS_OVERLAPPED | DllUtils.WS_CAPTION | DllUtils.WS_THICKFRAME | DllUtils.WS_MINIMIZEBOX | DllUtils.WS_MAXIMIZEBOX | DllUtils.WS_SYSMENU);
+                                        //NOTE: Discovery courtesy of SLT's UltralightWPF project.
+                                        //WARNING: Do not include WS_CHILD.
+                                        DevToolsWindowStyle |= DllUtils.WS_VISIBLE;
+                                        DllUtils.SetWindowLong(WebView2DevToolsHWND, DllUtils.GWL_STYLE, DevToolsWindowStyle);
+
+                                        int DevToolsWindowExStyle = DllUtils.GetWindowLong(WebView2DevToolsHWND, DllUtils.GWL_EXSTYLE);
+                                        DevToolsWindowExStyle &= ~(DllUtils.WS_EX_DLGMODALFRAME | DllUtils.WS_EX_CLIENTEDGE | DllUtils.WS_EX_STATICEDGE);
+                                        DevToolsWindowExStyle &= ~DllUtils.WS_EX_APPWINDOW;
+                                        DllUtils.SetWindowLong(WebView2DevToolsHWND, DllUtils.GWL_EXSTYLE, DevToolsWindowExStyle);
+
+                                        DllUtils.SetParent(WebView2DevToolsHWND, DevToolsHost.Handle);
+
+                                        DllUtils.SetWindowPos(WebView2DevToolsHWND, IntPtr.Zero, 0, 0, 0, 0, DllUtils.SWP_NOMOVE | DllUtils.SWP_NOSIZE | DllUtils.SWP_NOZORDER | DllUtils.SWP_FRAMECHANGED);
+                                        
+                                        UpdateDevToolsPosition();
+                                        DevToolsHost.SizeChanged += (s, e) => UpdateDevToolsPosition();
+                                    }
+                                }
+                            });
+                        }
+                    }
+                };
+            }
+            SideBar.Visibility = IsUtilityContainerOpen ? Visibility.Visible : Visibility.Collapsed;
+        }
+
+        public void UpdateDevToolsPosition()
+        {
+            if (WebView2DevToolsHWND == IntPtr.Zero) return;
+            //TODO: Resolve resize issue.
+            //The absence of WS_CHILD breaks the window resizing loop.
+            DllUtils.SetWindowPos(WebView2DevToolsHWND, IntPtr.Zero, -7, -30, (int)DevToolsHost.ActualWidth + 14, (int)DevToolsHost.ActualHeight + 37, DllUtils.SWP_NOZORDER | DllUtils.SWP_FRAMECHANGED | DllUtils.SWP_NOACTIVATE);
+        }
+
+        bool PIsReaderMode = false;
+        bool IsReaderMode
+        {
+            get => PIsReaderMode;
+            set
+            {
+                if (PIsReaderMode != value)
+                {
+                    if (value)
+                        Dispatcher.BeginInvoke(() => ReaderModeButton.Foreground = new SolidColorBrush(App.Instance.CurrentTheme.IndicatorColor));
+                    else
+                        Dispatcher.BeginInvoke(() => ReaderModeButton.ClearValue(ForegroundProperty));
+                    PIsReaderMode = value;
+                }
+            }
+        }
+        public async void ToggleReaderMode()
+        {
+            IsReaderMode = !IsReaderMode;
+            if (IsReaderMode)
+                WebView?.ExecuteScript(Scripts.ReaderModeScript);
+            else
+                Refresh();
+        }
+
+        NewsPage? _NewsFeed;
+        public void NewsFeed(bool ForceClose = false)
+        {
+            if (!ForceClose && IsUtilityContainerOpen && (_NewsFeed != null || DevToolsHost != null))
+            {
+                ToggleSideBar(ForceClose);
+                return;
+            }
+            ToggleSideBar(ForceClose);
+            if (IsUtilityContainerOpen)
+            {
+                DevToolsToolBar.Visibility = Visibility.Collapsed;
+                _NewsFeed = new NewsPage(this);
+                SideBarCoreContainer.Children.Add(_NewsFeed);
+                Grid.SetColumn(_NewsFeed, 1);
+                Grid.SetRow(_NewsFeed, 1);
+
+                _NewsFeed.HorizontalAlignment = HorizontalAlignment.Stretch;
+                _NewsFeed.VerticalAlignment = VerticalAlignment.Stretch;
+            }
+        }
+
+        bool Muted => WebView?.IsMuted ?? false;
+        public void ToggleMute()
+        {
+            WebView?.IsMuted = !WebView.IsMuted;
+            Tab.MuteCommandIcon = Muted ? "\xe767" : "\xe74f";
+            Tab.MuteCommandHeader = Muted ? "Unmute" : "Mute";
+            MuteMenuItem.Icon = Tab.MuteCommandIcon;
+            MuteMenuItem.Header = Tab.MuteCommandHeader;
+            SetAudioState(null);
+        }
+
+        public void FavouriteAction(bool Empty = false, Favourite? Parent = null)
+        {
+            bool Continue = Empty;
+            if (!Empty)
+            {
+                Favourite? ExistingFavourite = App.Instance.FavouriteManager.Contains(Address);
+                if (ExistingFavourite != null)
+                {
+                    App.Instance.FavouriteManager.Remove(ExistingFavourite);
+                    FavouriteButton.Content = "\xEB51";
+                    FavouriteButton.Foreground = (SolidColorBrush)FindResource("FontBrush");
+                    FavouriteButton.ToolTip = "Add to favourites";
+                    Tab.FavouriteCommandHeader = "Add to favourites";
+                }
+                else if (!IsLoading)
+                    Continue = true;
+            }
+            if (Continue)
+            {
+                /*List<string> Folders = ["Favourites bar"];
+                foreach (Favourite _Favourite in App.Instance.FavouriteManager.Favourites)
+                {
+                    if (_Favourite.Type == "folder")
+                    {
+                        Folders.Add(_Favourite.Name);*/
+                        /*foreach (Favourite _SFavourite in _Favourite.Children)
+                        {
+                            if (_SFavourite.Type == "folder")
+                                Folders.Add(_SFavourite.Name);
+                        }*/
+                    /*}
+                }*/
+                    
+                List<InputField> Inputs = [new() { Name = "Name", IsRequired = true, Type = DialogInputType.Text }];
+                var (Children, ParentLayer) = App.Instance.FavouriteManager.GenerateFolderTreeLayers(Parent);
+                ObservableCollection<UIElementLayer> FolderStructure = [new() {
+                    Text = "Favourites bar",
+                    Icon = "\xe8b7",
+                    Children = Children
+                }];
+                DynamicDialogWindow _DynamicDialogWindow = new("Prompt", "Add Favourite",
+                    [
+                        new() { Name = "Name", IsRequired = true, Type = DialogInputType.Text, Value = Empty ? string.Empty : Title },
+                        new() { Name = "URL", IsRequired = true, Type = DialogInputType.Text, Value = Empty ? string.Empty : Address },
+                        //new() { Name = "Folder", IsRequired = true, Type = DialogInputType.Dropdown, Value = Folders.First(), Options = Folders.ToList() }
+                        new() { Name = "Folder", IsRequired = true, Type = DialogInputType.Tree, Children = FolderStructure, TreeValue = ParentLayer }
+                    ],
+                    "\ueb51"
+                )
+                {
+                    Topmost = true
+                };
+                if (_DynamicDialogWindow.ShowDialog() == true)
+                {
+                    string URL = _DynamicDialogWindow.InputFields[1].Value.Trim();
+                    Favourite NewFavourite = new() { Type = "url", Url = URL, Name = _DynamicDialogWindow.InputFields[0].Value };
+                    /*string Folder = _DynamicDialogWindow.InputFields[2].Value;
+                    if (Folder == "Favourites bar")
+                        App.Instance.FavouriteManager.Add(NewFavourite, null);
+                    else
+                    {
+                        Favourite? TargetFolder = App.Instance.FavouriteManager.Favourites.FirstOrDefault(i => i.Type == "folder" && i.Name == Folder);
+                        App.Instance.FavouriteManager.Add(NewFavourite, TargetFolder);
+                    }*/
+                    UIElementLayer TreeSelection = _DynamicDialogWindow.InputFields[2].TreeValue;
+                    if (TreeSelection.Data is Favourite Target)
+                        App.Instance.FavouriteManager.Add(NewFavourite, Target);
+                    else
+                        App.Instance.FavouriteManager.Add(NewFavourite, null);
+                    if (URL == Address)
+                    {
+                        FavouriteButton.Content = "\xEB52";
+                        FavouriteButton.Foreground = App.Instance.FavouriteColor;
+                        FavouriteButton.ToolTip = "Remove from favourites";
+                        Tab.FavouriteCommandHeader = "Remove from favourites";
+                    }
+                }
+            }
+        }
+
+        public void SetFavouritesBarVisibility()
+        {
+            if (App.Instance.ShowFavouritesBar == 0)
+            {
+                if (App.Instance.FavouriteManager.Favourites.Count == 0)
+                {
+                    FavouriteScrollViewer.Margin = new Thickness(0);
+                    FavouriteContainer.Height = 5;
+                }
+                else
+                {
+                    FavouriteScrollViewer.Margin = new Thickness(5);
+                    FavouriteContainer.Height = 41.25f;
+                }
+            }
+            else if (App.Instance.ShowFavouritesBar == 1)
+            {
+                FavouriteScrollViewer.Margin = new Thickness(5);
+                FavouriteContainer.Height = 41.25f;
+            }
+            else if (App.Instance.ShowFavouritesBar == 2)
+            {
+                FavouriteScrollViewer.Margin = new Thickness(0);
+                FavouriteContainer.Height = 5;
+            }
+        }
+
+        public void SetDownloadsButtonVisibility()
+        {
+            if (App.Instance.ShowDownloadsButton == 0)
+                OpenDownloadsButton.Visibility = App.Instance.VisibleDownloads.Count != 0 ? Visibility.Visible : Visibility.Collapsed;
+            else if (App.Instance.ShowDownloadsButton == 1)
+                OpenDownloadsButton.Visibility = Visibility.Visible;
+            else
+                OpenDownloadsButton.Visibility = Visibility.Collapsed;
+        }
+
+        public void UpdateDownloadsButtonForeground(bool? HasActiveDownloads = null)
+        {
+            if (!HasActiveDownloads.HasValue)
+                HasActiveDownloads = App.Instance.Downloads.Values.Any(i => i.State == WebDownloadState.InProgress);
+            if (HasActiveDownloads.Value)
+                OpenDownloadsButton.Foreground = (SolidColorBrush)FindResource("IndicatorBrush");
+            else
+                OpenDownloadsButton.ClearValue(ForegroundProperty);
+        }
+        /*public void Zoom(int Delta)
+        {
+            if (WebView == null)
+                return;
+            if (Delta == 0)
+                WebView?.ZoomFactor = 1;
+            //{
+                //MessageBox.Show(WebView?.ZoomFactor.ToString());
+            //}
+            //Chromium.ZoomResetCommand.Execute(null);
+            else if (Delta > 0)
+                WebView?.ZoomFactor += 0.1;
+            //Chromium.ZoomInCommand.Execute(null);
+            else if (Delta < 0)
+                WebView?.ZoomFactor -= 0.1;
+            //Chromium.ZoomOutCommand.Execute(null);
+        }*/
+        public async void Screenshot()
+        {
+            if (WebView == null)
+                return;
+            try
+            {
+                string FileExtension;
+                string Filter;
+                WebScreenshotFormat ScreenshotFormat;
+                switch (App.Instance.GlobalSave.GetInt("ScreenshotFormat"))
+                {
+                    case 0:
+                        FileExtension = "jpeg";
+                        Filter = "JPEG Image (*.jpeg)|*.jpeg";
+                        ScreenshotFormat = WebScreenshotFormat.JPEG;
+                        break;
+                    case 1:
+                        FileExtension = "png";
+                        Filter = "PNG Image (*.png)|*.png";
+                        ScreenshotFormat = WebScreenshotFormat.PNG;
+                        break;
+                    default:
+                        FileExtension = "webp";
+                        Filter = "WEBP Image (*.webp)|*.webp";
+                        ScreenshotFormat = WebScreenshotFormat.WebP;
+                        break;
+                }
+                byte[] ImageBytes = await WebView.TakeScreenshotAsync(ScreenshotFormat);
+                SetDarkMode(App.Instance.CurrentTheme.DarkWebPage);
+                DateTime CurrentTime = DateTime.Now;
+                WebViewManager.DownloadManager.WriteDownload(ImageBytes, Path.Combine(App.Instance.GlobalSave.Get("ScreenshotPath"), Utils.SanitizeFileName($"{WebView.Title} {CurrentTime.Day}-{CurrentTime.Month}-{CurrentTime.Year} {string.Format("{0:hh:mm tt}", DateTime.Now)}.{FileExtension}")), WebViewManager.RuntimeSettings.DownloadPrompt, Filter);
+            }
+            catch { }
+        }
+
+        bool PrivateTranslate = false;
+        bool Translated
+        {
+            get => PrivateTranslate;
+            set
+            {
+                if (PrivateTranslate != value)
+                {
+                    if (value)
+                        Dispatcher.BeginInvoke(() => TranslateButton.Foreground = new SolidColorBrush(App.Instance.CurrentTheme.IndicatorColor));
+                    else
+                        Dispatcher.BeginInvoke(() => TranslateButton.ClearValue(ForegroundProperty));
+                    PrivateTranslate = value;
+                }
+            }
+        }
+
+        public async void Translate(bool Original = false)
+        {
+            if (Original)
+            {
+                TranslateButton.ClosePopup();
+                if (Translated == true)
+                    Refresh();
+                return;
+            }
+            if (WebView == null)
+                return;
+            try
+            {
+                string Texts = (await WebView.EvaluateScriptAsync(Scripts.GetTranslationText)).ToString();
+                List<string> TranslatedTexts = null;
+                if (TranslateButton.Visibility == Visibility.Visible)
+                    TranslateButton.OpenPopup();
+                await Dispatcher.BeginInvoke(() => TranslateLoadingPanel.Visibility = Visibility.Visible);
+                List<string> AllTexts = JsonSerializer.Deserialize<List<string>>(Texts);
+                if (AllTexts.Count == 0)
+                {
+                    Dispatcher.BeginInvoke(() =>
+                    {
+                        TranslateLoadingPanel.Visibility = Visibility.Collapsed;
+                        if (UnavailableTranslationInfoBar == null)
+                        {
+                            UnavailableTranslationInfoBar = new() { Title = "Translation Unavailable", Description = [new() { Text = "Unable to translate webpage." }] };
+                            LocalInfoBars.Add(UnavailableTranslationInfoBar);
+                        }
+                    });
+                    return;
+                }
+                string TargetLanguage = App.Instance.AllLocales.First(i => i.Value == TranslateComboBox.SelectedValue).Key;
+                switch (App.Instance.GlobalSave.GetInt("TranslationProvider"))
+                {
+                    case 0:
+                        IEnumerable<List<string>> GBatches = AllTexts.Select((t, i) => new { t, i }).GroupBy(x => x.i / 50).Select(g => g.Select(x => x.t).ToList());
+
+                        TranslatedTexts = [];
+                        List<Task<List<string>>> GBatchTasks = [];
+
+                        foreach (List<string> Batch in GBatches)
+                        {
+                            GBatchTasks.Add(Task.Run(async () =>
+                            {
+                                using (HttpRequestMessage TranslateRequest = new HttpRequestMessage(HttpMethod.Post, SECRETS.GOOGLE_TRANSLATE_ENDPOINT))
+                                {
+                                    TranslateRequest.Headers.Add("Origin", "https://www.google.com");
+                                    TranslateRequest.Headers.Add("Accept", "*/*");
+                                    TranslateRequest.Headers.Add("User-Agent", App.Instance.UserAgent);
+                                    TranslateRequest.Content = new StringContent(JsonSerializer.Serialize(new object[] { new object[] { Batch, "auto", TargetLanguage }, "te_lib" }), Encoding.UTF8, "application/json+protobuf");
+                                    var Response = await App.MiniHttpClient.SendAsync(TranslateRequest);
+                                    if (!Response.IsSuccessStatusCode)
+                                        return [];
+                                    string Data = await Response.Content.ReadAsStringAsync();
+                                    List<object> Json = JsonSerializer.Deserialize<List<object>>(Data);
+                                    if (Json == null || Json.Count == 0)
+                                        return [];
+                                    if (Json[0] is not JsonElement Element || Element.ValueKind != JsonValueKind.Array)
+                                        return [];
+                                    return Element.EnumerateArray().Select(e => HttpUtility.HtmlDecode(e.GetString())).ToList()!;
+                                }
+                            }));
+                        }
+
+                        var GResults = await Task.WhenAll(GBatchTasks);
+                        foreach (List<string> BatchResult in GResults)
+                            TranslatedTexts.AddRange(BatchResult);
+                        break;
+                    case 1:
+                        IEnumerable<List<string>> MBatches = AllTexts.Select((t, i) => new { t, i }).GroupBy(x => x.i / 50).Select(g => g.Select(x => x.t).ToList());
+
+                        TranslatedTexts = [];
+                        List<Task<List<string>>> MBatchTasks = [];
+
+                        foreach (List<string> Batch in MBatches)
+                        {
+                            MBatchTasks.Add(Task.Run(async () =>
+                            {
+                                using (HttpRequestMessage TranslateRequest = new(HttpMethod.Post, string.Format(SECRETS.MICROSOFT_TRANSLATE_ENDPOINT, TargetLanguage)))
+                                {
+                                    TranslateRequest.Headers.Add("User-Agent", App.Instance.UserAgent);
+                                    TranslateRequest.Content = new StringContent(JsonSerializer.Serialize(Batch), Encoding.UTF8, "application/json");
+                                    var Response = await App.MiniHttpClient.SendAsync(TranslateRequest);
+                                    if (!Response.IsSuccessStatusCode)
+                                        return [];
+                                    string Data = await Response.Content.ReadAsStringAsync();
+                                    try
+                                    {
+                                        List<string> Result = [];
+                                        using JsonDocument Document = JsonDocument.Parse(Data);
+                                        foreach (JsonElement Item in Document.RootElement.EnumerateArray())
+                                        {
+                                            if (Item.TryGetProperty("translations", out JsonElement TranslationsElement))
+                                            {
+                                                foreach (JsonElement TranslationElement in TranslationsElement.EnumerateArray())
+                                                {
+                                                    if (TranslationElement.TryGetProperty("text", out JsonElement TextElement))
+                                                        Result.Add(TextElement.GetString() ?? "");
+                                                }
+                                            }
+                                        }
+                                        return Result;
+                                    }
+                                    catch
+                                    {
+                                        return [];
+                                    }
+                                }
+                            }));
+                        }
+
+                        var MResults = await Task.WhenAll(MBatchTasks);
+                        foreach (List<string> BatchResult in MResults)
+                            TranslatedTexts.AddRange(BatchResult);
+                        break;
+                    case 2:
+                        string SourceLanguage = "";
+                        try
+                        {
+                            using (HttpRequestMessage LanguageDetectRequest = new(HttpMethod.Get, string.Format(SECRETS.YANDEX_LANGUAGE_DETECTION_ENDPOINT, $"{Utils.GenerateSID()}-0-0", HttpUtility.UrlEncode(AllTexts.First()))))
+                            {
+                                var Response = await App.MiniHttpClient.SendAsync(LanguageDetectRequest);
+                                if (!Response.IsSuccessStatusCode)
+                                {
+                                    Dispatcher.BeginInvoke(() =>
+                                    {
+                                        TranslateLoadingPanel.Visibility = Visibility.Collapsed;
+                                        if (UnavailableTranslationInfoBar == null)
+                                        {
+                                            UnavailableTranslationInfoBar = new() { Title = "Translation Unavailable", Description = [new() { Text = "Unable to translate webpage." }] };
+                                            LocalInfoBars.Add(UnavailableTranslationInfoBar);
+                                        }
+                                    });
+                                    return;
+                                }
+                                string Data = await Response.Content.ReadAsStringAsync();
+                                using JsonDocument Document = JsonDocument.Parse(Data);
+                                if (Document.RootElement.TryGetProperty("lang", out JsonElement LanguageElement))
+                                    SourceLanguage = LanguageElement.GetString() ?? "en";
+                            }
+                        }
+                        catch
+                        {
+                            Dispatcher.BeginInvoke(() =>
+                            {
+                                TranslateLoadingPanel.Visibility = Visibility.Collapsed;
+                                if (UnavailableTranslationInfoBar == null)
+                                {
+                                    UnavailableTranslationInfoBar = new() { Title = "Translation Unavailable", Description = [new() { Text = "Unable to translate webpage." }] };
+                                    LocalInfoBars.Add(UnavailableTranslationInfoBar);
+                                }
+                            });
+                            return;
+                        }
+                        IEnumerable<List<string>> Batches = AllTexts.Select((t, i) => new { t, i }).GroupBy(x => x.i / 16).Select(g => g.Select(x => x.t).ToList());
+
+                        TargetLanguage = TargetLanguage.Split('-').First();
+                        string YandexUserAgent = UserAgentGenerator.BuildUserAgentFromProduct("YaBrowser/25.2.0.0");
+                        TranslatedTexts = [];
+                        List<Task<List<string>>> BatchTasks = [];
+
+                        foreach (List<string> Batch in Batches)
+                        {
+                            BatchTasks.Add(Task.Run(async () =>
+                            {
+                                List<string> EncodedTexts = Batch.Select(t => "text=" + HttpUtility.UrlEncode(t)).ToList();
+                                string TextParameters = string.Join("&", EncodedTexts);
+                                using (HttpRequestMessage TranslateRequest = new(HttpMethod.Get, string.Format(SECRETS.YANDEX_ENDPOINT, $"{Utils.GenerateSID()}-0-0", $"{SourceLanguage}-{TargetLanguage}", TextParameters)))
+                                {
+                                    TranslateRequest.Headers.Add("User-Agent", YandexUserAgent);
+                                    try
+                                    {
+                                        var Response = await App.MiniHttpClient.SendAsync(TranslateRequest);
+                                        Response.EnsureSuccessStatusCode();
+
+                                        string Data = await Response.Content.ReadAsStringAsync();
+                                        using JsonDocument Document = JsonDocument.Parse(Data);
+                                        if (Document.RootElement.TryGetProperty("text", out JsonElement TranslatedTexts))
+                                            return TranslatedTexts.EnumerateArray().Select(x => x.GetString() ?? "").ToList();
+                                    }
+                                    catch
+                                    {
+                                        return [];
+                                    }
+                                }
+                                return [];
+                            }));
+                        }
+
+                        var Results = await Task.WhenAll(BatchTasks);
+                        foreach (List<string> BatchResult in Results)
+                            TranslatedTexts.AddRange(BatchResult);
+                        break;
+                    case 3:
+                        TargetLanguage = TargetLanguage switch
+                        {
+                            "zh" => "zh-Hans",
+                            "zh-CN" => "zh-Hans",
+                            "zh-TW" => "zh-Hant",
+                            "zh-HK" => "zh-Hant",
+                            _ => TargetLanguage
+                        };
+
+                        IEnumerable<List<string>> LBatches = AllTexts.Select((t, i) => new { t, i }).GroupBy(x => x.i / 50).Select(g => g.Select(x => x.t).ToList());
+
+                        TranslatedTexts = [];
+                        List<Task<List<string>>> LBatchTasks = [];
+
+                        foreach (List<string> Batch in LBatches)
+                        {
+                            LBatchTasks.Add(Task.Run(async () =>
+                            {
+                                using (HttpRequestMessage TranslateRequest = new(HttpMethod.Post, SECRETS.LINGVANEX_ENDPOINT))
+                                {
+                                    TranslateRequest.Headers.Add("User-Agent", App.Instance.UserAgent);
+                                    TranslateRequest.Content = new StringContent(JsonSerializer.Serialize(new
+                                    {
+                                        target = TargetLanguage,
+                                        q = Batch
+                                    }), Encoding.UTF8, "application/json");
+                                    var Response = await App.MiniHttpClient.SendAsync(TranslateRequest);
+                                    if (!Response.IsSuccessStatusCode)
+                                        return [];
+                                    string Data = await Response.Content.ReadAsStringAsync();
+                                    List<string> Result = [];
+
+                                    try
+                                    {
+                                        using JsonDocument Document = JsonDocument.Parse(Data);
+                                        if (Document.RootElement.TryGetProperty("translatedText", out JsonElement TranslatedText))
+                                        {
+                                            foreach (var Item in TranslatedText.EnumerateArray())
+                                                Result.Add(Item.GetString() ?? "");
+                                        }
+                                    }
+                                    catch { }
+                                    return Result;
+                                }
+                            }));
+                        }
+
+                        var LResults = await Task.WhenAll(LBatchTasks);
+                        foreach (List<string> BatchResult in LResults)
+                            TranslatedTexts.AddRange(BatchResult);
+                        break;
+                }
+                if (TranslatedTexts == null || TranslatedTexts.Count == 0)
+                {
+                    Dispatcher.BeginInvoke(() =>
+                    {
+                        TranslateLoadingPanel.Visibility = Visibility.Collapsed;
+                        if (UnavailableTranslationInfoBar == null)
+                        {
+                            UnavailableTranslationInfoBar = new() { Title = "Translation Unavailable", Description = [new() { Text = "Unable to translate webpage." }] };
+                            LocalInfoBars.Add(UnavailableTranslationInfoBar);
+                        }
+                    });
+                    return;
+                }
+                Translated = true;
+                Dispatcher.BeginInvoke(() =>
+                {
+                    TranslateLoadingPanel.Visibility = Visibility.Collapsed;
+                    TranslateButton.ClosePopup();
+                });
+                WebView.ExecuteScript(string.Format(Scripts.SetTranslationText, JsonSerializer.Serialize(TranslatedTexts)));
+            }
+            catch { }
+        }
+
+        private void OmniBoxContainer_MouseEnter(object sender, MouseEventArgs e)
+        {
+            SiteInformationText.Visibility = Visibility.Visible;
+            OmniBoxHovered = true;
+        }
+
+        private void OmniBoxContainer_MouseLeave(object sender, MouseEventArgs e)
+        {
+            if (!OmniBoxFocused)
+                SiteInformationText.Visibility = Visibility.Collapsed;
+            OmniBoxHovered = false;
+        }
+
+        public void OmniBoxEnter()
+        {
+            SmartSuggestionCancellation?.Cancel();
+            SmartSuggestionCancellation?.Dispose();
+            SmartSuggestionCancellation = null;
+            OmniBoxFastTimer?.Stop();
+            OmniBoxSmartTimer?.Stop();
+            string SearchUrl = App.Instance.DefaultSearchProvider.SearchUrl;
+            if (OmniBoxOverrideSearch != null && !string.IsNullOrEmpty(OmniBoxOverrideSearch.SearchUrl))
+                SearchUrl = OmniBoxOverrideSearch.SearchUrl;
+            string Url = Utils.FilterUrlForBrowser(OmniBoxText, SearchUrl);
+            if (Url.StartsWith("javascript:"))
+            {
+                WebView?.ExecuteScript(Url.Substring(11));
+                OmniBoxText = OmniBox.Tag.ToString();
+                OmniBox.Text = OmniBox.Tag.ToString();
+            }
+            else if (!Utils.IsProgramUrl(Url))
+                Address = Url;
+            if (!Private && App.Instance.SearchSuggestions)
+            {
+                OmniBoxFastTimer?.Stop();
+                OmniBoxSmartTimer?.Stop();
+            }
+            OmniBox.IsDropDownOpen = false;
+            Keyboard.ClearFocus();
+            WebView?.Control?.Focus();
+            if (OmniBoxOverrideSearch != null)
+            {
+                OmniBoxStatus.Visibility = Visibility.Collapsed;
+                OmniBoxOverrideSearch = null;
+                if (OmniBoxText.Length != 0)
+                {
+                    foreach (SearchProvider Search in App.Instance.SearchEngines)
+                    {
+                        if (Search.Name.StartsWith(OmniBoxText, StringComparison.OrdinalIgnoreCase))
+                        {
+                            OmniBoxStatus.Tag = App.Instance.SearchEngines.IndexOf(Search);
+                            OmniBoxStatusText.Text = $"Search {Search.Name}";
+                            OmniBoxStatus.Visibility = Visibility.Visible;
+                            break;
+                        }
+                    }
+                }
+                SetTemporarySiteInformation();
+            }
+        }
+
+        private static bool IsIgnorableKey(Key Key)
+        {
+            if (Key >= Key.F1 && Key <= Key.F24)
+                return true;
+            return Key switch
+            {
+                Key.Escape or Key.PrintScreen or Key.Pause or Key.Scroll
+                or Key.Insert or Key.Delete or Key.Home or Key.End
+                or Key.PageUp or Key.PageDown or Key.Up or Key.Down
+                or Key.Left or Key.Right or Key.CapsLock or Key.NumLock
+                or Key.Tab or Key.LWin or Key.RWin
+                or Key.LeftCtrl or Key.RightCtrl
+                or Key.LeftAlt or Key.RightAlt => true,
+                _ => false
+            };
+        }
+
+        SearchProvider? OmniBoxOverrideSearch;
+
+        private void OmniBox_PreviewKeyDown(object sender, KeyEventArgs e)
+        {
+            OmniBoxSelectionByMouse = false;
+            if (e.Key == Key.Tab)
+            {
+                if (OmniBoxOverrideSearch != null)
+                {
+                    OmniBoxStatus.Visibility = Visibility.Collapsed;
+                    OmniBoxOverrideSearch = null;
+                    if (OmniBoxText.Length != 0)
+                    {
+                        foreach (SearchProvider Search in App.Instance.SearchEngines)
+                        {
+                            if (Search.Name.StartsWith(OmniBoxText, StringComparison.OrdinalIgnoreCase))
+                            {
+                                OmniBoxStatus.Tag = App.Instance.SearchEngines.IndexOf(Search);
+                                OmniBoxStatusText.Text = $"Search {Search.Name}";
+                                OmniBoxStatus.Visibility = Visibility.Visible;
+                                break;
+                            }
+                        }
+                    }
+                    SetTemporarySiteInformation();
+                    ShowOmniBoxSuggestions();
+                    e.Handled = true;
+                }
+                else if (OmniBoxStatus.Visibility == Visibility.Visible)
+                {
+                    OmniBoxText = string.Empty;
+                    OmniBox.Text = string.Empty;
+                    OmniBoxStatus.Visibility = Visibility.Collapsed;
+                    string SelectedProvider = OmniBoxStatus.Tag.ToString()!;
+                    OmniBoxOverrideSearch = SelectedProvider.StartsWith("S") ? App.Instance.AllSystemSearchEngines[int.Parse(SelectedProvider[1..])] : App.Instance.SearchEngines[int.Parse(SelectedProvider)];
+                    SetTemporarySiteInformation();
+                    ShowOmniBoxSuggestions();
+                    e.Handled = true;
+                }
+            }
+            else if (e.Key == Key.Escape)
+            {
+                if (OmniBox.Text != OmniBox.Tag.ToString())
+                {
+                    if (OmniBox.Tag.ToString().StartsWith("slbr://newtab"))
+                    {
+                        OmniBoxPlaceholder.Visibility = Visibility.Visible;
+                        OmniBoxText = string.Empty;
+                        OmniBox.Text = string.Empty;
+                    }
+                    else
+                    {
+                        OmniBoxPlaceholder.Visibility = Visibility.Hidden;
+                        OmniBoxText = OmniBox.Tag.ToString();
+                        OmniBox.Text = OmniBox.Tag.ToString();
+                    }
+                }
+                if (OmniBox.Text.Trim().Length == 0)
+                    OmniBoxPlaceholder.Visibility = Visibility.Visible;
+                SmartSuggestionCancellation?.Cancel();
+                SmartSuggestionCancellation?.Dispose();
+                SmartSuggestionCancellation = null;
+                OmniBoxFastTimer?.Stop();
+                OmniBoxSmartTimer?.Stop();
+                OmniBox.IsDropDownOpen = false;
+                Keyboard.ClearFocus();
+                WebView?.Control?.Focus();
+            }
+            else if (e.Key == Key.Back && OmniBox.Text.Length == 0)
+            {
+                if (OmniBoxOverrideSearch != null)
+                {
+                    OmniBoxStatus.Visibility = Visibility.Collapsed;
+                    OmniBoxOverrideSearch = null;
+                    SetTemporarySiteInformation();
+                    ShowOmniBoxSuggestions();
+                    e.Handled = true;
+                }
+            }
+        }
+
+        private void OmniBox_PreviewKeyUp(object sender, KeyEventArgs e)
+        {
+            if (e.Key == Key.Return)
+            {
+                if (OmniBoxText.Trim().Length > 0)
+                    OmniBoxEnter();
+            }
+            else
+            {
+                if (IsIgnorableKey(e.Key) || Keyboard.Modifiers == ModifierKeys.Control || Keyboard.Modifiers == ModifierKeys.Alt || Keyboard.Modifiers == ModifierKeys.Windows)
+                    return;
+                LoadingStoryboard = SiteInformationIcon.FindResource("LoadingAnimation") as Storyboard;
+                LoadingStoryboard?.Seek(TimeSpan.Zero);
+                LoadingStoryboard?.Stop();
+                SetTemporarySiteInformation();
+                if (!Private && App.Instance.SearchSuggestions)
+                {
+                    Dispatcher.BeginInvoke(() =>
+                    {
+                        ShowOmniBoxSuggestions();
+                    }, DispatcherPriority.Background);
+                }
+                if (OmniBox.IsDropDownOpen)
+                {
+                    OmniBoxPopup.HorizontalOffset = -(SiteInformationPopupButton.ActualWidth + 8);
+                    OmniBoxPopupDropDown.Width = OmniBoxContainer.ActualWidth;
+                }
+            }
+        }
+        public bool IsOmniBoxModifiable()
+        {
+            return !OmniBoxFocused;
+        }
+        public void SetTemporarySiteInformation()
+        {
+            SiteInformationIcon.FontFamily = App.Instance.IconFont;
+            SiteInformationIcon.Foreground = (SolidColorBrush)FindResource("FontBrush");
+            if (OmniBoxOverrideSearch == null)
+            {
+                if (OmniBoxText.StartsWith("search:"))
+                {
+                    SiteInformationIcon.Text = "\xE721";
+                    SiteInformationText.Text = "Search";
+                    SiteInformationPopupButton.ToolTip = $"Searching: {OmniBoxText.Substring(7).Trim()}";
+                }
+                else if (OmniBoxText.StartsWith("domain:"))
+                {
+                    SiteInformationIcon.Text = "\xE71B";
+                    SiteInformationText.Text = "Address";
+                    SiteInformationPopupButton.ToolTip = $"Address: {OmniBoxText.Substring(7).Trim()}";
+                }
+                else if (Utils.IsProgramUrl(OmniBoxText))
+                {
+                    SiteInformationIcon.Text = "\xE756";
+                    SiteInformationText.Text = "Program";
+                    SiteInformationPopupButton.ToolTip = $"Open program: {OmniBoxText}";
+                }
+                else if (Utils.IsCode(OmniBoxText))
+                {
+                    SiteInformationIcon.Text = "\xE943";
+                    SiteInformationText.Text = "Code";
+                    SiteInformationPopupButton.ToolTip = $"Code: {OmniBoxText}";
+                }
+                else if (Utils.IsUrl(OmniBoxText))
+                {
+                    SiteInformationIcon.Text = "\xE71B";
+                    SiteInformationText.Text = "Address";
+                    SiteInformationPopupButton.ToolTip = $"Address: {OmniBoxText}";
+                }
+                else
+                {
+                    SiteInformationIcon.Text = "\xE721";
+                    SiteInformationText.Text = "Search";
+                    SiteInformationPopupButton.ToolTip = $"Searching: {OmniBoxText}";
+                }
+            }
+            else
+            {
+                if (OmniBoxOverrideSearch.Host == "__Program__")
+                {
+                    switch (OmniBoxOverrideSearch.Name)
+                    {
+                        case "Tabs":
+                            SiteInformationIcon.Text = "\xec6c";
+                            break;
+                        case "History":
+                            SiteInformationIcon.Text = "\xe81c";
+                            break;
+                        case "Favourites":
+                            SiteInformationIcon.Text = "\xeb51";
+                            break;
+                        default:
+                            SiteInformationIcon.Text = "\xED37";
+                            break;
+                    }
+                }
+                else
+                    SiteInformationIcon.Text = "\xED37";
+                SiteInformationText.Text = OmniBoxOverrideSearch.Name;
+                SiteInformationPopupButton.ToolTip = $"Searching {OmniBoxOverrideSearch.Name}: {OmniBoxText.Trim()}";
+            }
+        }
+
+        private void OmniBox_IsKeyboardFocusWithinChanged(object sender, DependencyPropertyChangedEventArgs e)
+        {
+            if (OmniBox.IsKeyboardFocusWithin)
+            {
+                OmniBoxOverlayText.Visibility = Visibility.Collapsed;
+                OmniBox.Opacity = 1;
+
+                OmniBoxBorder.BorderThickness = new Thickness(2);
+                OmniBoxBorder.BorderBrush = (SolidColorBrush)FindResource("IndicatorBrush");
+                OmniBoxFocused = true;
+                OmniBoxPlaceholder.Visibility = Visibility.Hidden;
+                if (!OmniBoxHovered)
+                    SiteInformationText.Visibility = Visibility.Visible;
+            }
+            else
+            {
+                OmniBox.IsDropDownOpen = false;
+                try
+                {
+                    if (OmniBoxText.Trim().Length == 0)
+                        OmniBoxPlaceholder.Visibility = Visibility.Visible;
+                    if (OmniBox.Text == OmniBox.Tag.ToString())
+                        SetOverlayDisplay(App.Instance.TrimURL, App.Instance.HomographProtection);
+                }
+                catch { }
+                OmniBoxBorder.BorderThickness = new Thickness(1);
+                OmniBoxBorder.BorderBrush = (SolidColorBrush)FindResource("BorderBrush");
+                OmniBoxFocused = false;
+                if (!OmniBoxHovered)
+                    SiteInformationText.Visibility = Visibility.Collapsed;
+            }
+        }
+
+        //Protection against homograph attacks https://www.xudongz.com/blog/2017/idn-phishing/
+        public void SetOverlayDisplay(bool TruncateURL = true, bool HighlightSuspicious = true)
+        {
+            OmniBoxStatus.Visibility = Visibility.Collapsed;
+            bool UseModernURL = App.Instance.ModernURL && App.Instance.TrimURL;
+            OmniBoxOverlayText.Inlines.Clear();
+            OmniBoxOverlayText.Visibility = Visibility.Visible;
+            OmniBox.Opacity = 0;
+            if (OmniBox.Tag is not string Url || string.IsNullOrWhiteSpace(Url) || Url.StartsWith("slbr://newtab"))
+            {
+                OmniBoxOverlayText.Text = string.Empty;
+                return;
+            }
+
+            Url = Utils.CleanUrl(Url, false, TruncateURL, TruncateURL, TruncateURL && SiteInformationText.Text != "Danger", false);
+            SolidColorBrush GrayBrush = (SolidColorBrush)FindResource("GrayBrush");
+
+            string Scheme = Utils.GetScheme(Url);
+
+            ReadOnlySpan<char> _Span = Url.AsSpan();
+
+            bool ProtocolStripped = false;
+            switch (Scheme)
+            {
+                case "https":
+                    if (TruncateURL)
+                    {
+                        _Span = _Span[8..];
+                        ProtocolStripped = true;
+                    }
+                    else
+                        OmniBoxOverlayText.Inlines.Add(new Run(Scheme) { Foreground = App.Instance.GreenColor });
+                    break;
+                case "http":
+                    if (TruncateURL)
+                    {
+                        _Span = _Span[7..];
+                        ProtocolStripped = true;
+                    }
+                    else
+                        OmniBoxOverlayText.Inlines.Add(new Run(Scheme) { Foreground = App.Instance.RedColor });
+                    break;
+                case "slbr":
+                    HighlightSuspicious = false;
+                    OmniBoxOverlayText.Inlines.Add(new Run(UseModernURL ? "SLBr" : Scheme) { Foreground = App.Instance.SLBrColor });
+                    break;
+                case "file":
+                    if (UseModernURL)
+                    {
+                        OmniBoxOverlayText.Inlines.Add(new Run(Url[8..10]) { Foreground = (SolidColorBrush)FindResource("FontBrush") });
+                        OmniBoxOverlayText.Inlines.Add(new Run(Url[10..].Replace("/", " › ")) { Foreground = GrayBrush });
+                    }
+                    else
+                        OmniBoxOverlayText.Inlines.Add(new Run(TruncateURL ? Url[8..] : Url) { Foreground = GrayBrush });
+                    return;
+                case "gopher":
+                case "gemini":
+                    OmniBoxOverlayText.Inlines.Add(new Run(UseModernURL ? Scheme.ToTitleCase() : Scheme) { Foreground = GrayBrush });
+                    break;
+                default:
+                    OmniBoxOverlayText.Inlines.Add(new Run(Url) { Foreground = GrayBrush });
+                    return;
+            }
+
+            if (!ProtocolStripped)
+            {
+                int Protocol = _Span.IndexOf("://");
+                if (Protocol >= 0)
+                {
+                    OmniBoxOverlayText.Inlines.Add(new Run(UseModernURL ? " / " : "://") { Foreground = GrayBrush });
+                    _Span = _Span[(Protocol + 3)..];
+                    ProtocolStripped = true;
+                }
+            }
+
+            //www.com, m.com
+            //WARNING: Potential attack vector via subdomain hijacking, "m.paypal.com" rendered as "paypal.com"
+            if (_Span.StartsWith("www.") && Utils.CanRemoveTrivialSubdomain(_Span[4..]))
+            {
+                if (!TruncateURL)
+                    OmniBoxOverlayText.Inlines.Add(new Run("www.") { Foreground = GrayBrush });
+                _Span = _Span[4..];
+            }
+            else if (_Span.StartsWith("m.") && Utils.CanRemoveTrivialSubdomain(_Span[2..]))
+            {
+                if (!TruncateURL)
+                    OmniBoxOverlayText.Inlines.Add(new Run("m.") { Foreground = GrayBrush });
+                _Span = _Span[2..];
+            }
+
+            int HostEnd = _Span.IndexOfAny(Utils.HostEndSearchValues);
+            ReadOnlySpan<char> Host = HostEnd >= 0 ? _Span[..HostEnd] : _Span;
+
+            //Opportunity cost of rendering punycode as unicode
+            if (!App.Instance.PunycodeURL)
+            {
+                int HostIndex = 0;
+                StringBuilder HostBuffer = new(Host.Length);
+
+                while (HostIndex < Host.Length)
+                {
+                    int Dot = Host.Slice(HostIndex).IndexOf('.');
+                    ReadOnlySpan<char> Label;
+                    if (Dot == -1)
+                    {
+                        Label = Host[HostIndex..];
+                        HostIndex = Host.Length;
+                    }
+                    else
+                    {
+                        Label = Host.Slice(HostIndex, Dot);
+                        HostIndex += Dot + 1;
+                    }
+                    if (Label.StartsWith("xn--", StringComparison.OrdinalIgnoreCase))
+                    {
+                        try { HostBuffer.Append(App.Instance._IdnMapping.GetUnicode(Label.ToString())); }
+                        catch { HostBuffer.Append(Label); }
+                    }
+                    else
+                        HostBuffer.Append(Label);
+                    if (HostIndex < Host.Length)
+                        HostBuffer.Append('.');
+                }
+                Host = HostBuffer.ToString().AsSpan();
+                /*TODO: Replace with deception warning page.
+                 * Flag suspicious punycode URLs in WebRiskHandler?
+                 * Obstructive to user experience.
+                 * Consider opposite, replace warning page with infobox?
+                 */
+                if (HomographInfoBar == null && Scheme is "https" or "http" && bool.Parse(App.Instance.GlobalSave.Get("HomographInfoBar")))
+                {
+                    //https://aws.amazon.com/blogs/machine-learning/infoblox-inc-built-a-patent-pending-homograph-attack-detection-model-for-dns-with-amazon-sagemaker/
+                    //https://issues.chromium.org/issues/40083641
+                    string PerceivedHost = Utils.BuildTextSkeleton(Host.ToString());
+                    bool IsHomograph = !string.Equals(Host.ToString(), PerceivedHost, StringComparison.OrdinalIgnoreCase);
+                    //MessageBox.Show($"{PerceivedHost} {Host.ToString()} {IsHomograph}");
+                    if (IsHomograph)
+                    {
+                        HomographInfoBar = new()
+                        {
+                            Icon = "\ue730",
+                            IconForeground = App.Instance.RedColor,
+                            Title = "Suspicious Address",
+                            Description = [
+                                new() { Text = "Did you mean to go to " },
+                                new() { Text = PerceivedHost, Foreground = App.Instance.CornflowerBlueColor, Command = new RelayCommand(() => Navigate(Utils.FixUrl(PerceivedHost))) },
+                                new() { Text = "?" }
+                            ],
+                            Actions = [
+                                new() { Text = "Do not ask again", Command = new RelayCommand(async () => { CloseInfoBar(HomographInfoBar); App.Instance.GlobalSave.Set("HomographInfoBar", false); }) }
+                            ]
+                        };
+                        LocalInfoBars.Add(HomographInfoBar);
+                    }
+                }
+            }
+
+            SolidColorBrush FontBrush = (SolidColorBrush)FindResource("FontBrush");
+            if (HighlightSuspicious)
+            {
+                //vvikipedia.com
+                //xn--micrsoft-qbh.com
+                //xn--l-7sba6dbr.com
+                //xn--pple-zld.com
+                //xn--80ak6aa92e.com
+                //www.xn--80a6aa.com
+                //adoḅe.com
+                int HostIndex = 0;
+                StringBuilder HostBuffer = new();
+                bool IsNormal = false;
+
+                while (HostIndex < Host.Length)
+                {
+                    char _Char = Host[HostIndex];
+                    if (_Char > 127 && char.IsLetter(_Char))
+                    {
+                        if (IsNormal)
+                        {
+                            if (HostBuffer.Length != 0)
+                            {
+                                OmniBoxOverlayText.Inlines.Add(new Run(HostBuffer.ToString()) { Foreground = IsNormal ? FontBrush : App.Instance.OrangeColor });
+                                HostBuffer.Clear();
+                            }
+                            IsNormal = false;
+                        }
+                        HostBuffer.Append(_Char);
+                        HostIndex++;
+                        continue;
+                    }
+
+                    bool Matched = false;
+                    foreach (string Confusable in App.URLConfusables.Value)
+                    {
+                        //WARNING: Do not remove StringComparison.Ordinal
+                        if (HostIndex + Confusable.Length <= Host.Length && Host.Slice(HostIndex, Confusable.Length).Equals(Confusable.AsSpan(), StringComparison.Ordinal))
+                        {
+                            if (IsNormal)
+                            {
+                                if (HostBuffer.Length != 0)
+                                {
+                                    OmniBoxOverlayText.Inlines.Add(new Run(HostBuffer.ToString()) { Foreground = IsNormal ? FontBrush : App.Instance.OrangeColor });
+                                    HostBuffer.Clear();
+                                }
+                                IsNormal = false;
+                            }
+                            HostBuffer.Append(Confusable);
+                            HostIndex += Confusable.Length;
+                            Matched = true;
+                            break;
+                        }
+                    }
+
+                    if (!Matched)
+                    {
+                        if (!IsNormal)
+                        {
+                            if (HostBuffer.Length != 0)
+                            {
+                                OmniBoxOverlayText.Inlines.Add(new Run(HostBuffer.ToString()) { Foreground = IsNormal ? FontBrush : App.Instance.OrangeColor });
+                                HostBuffer.Clear();
+                            }
+                            IsNormal = true;
+                        }
+                        HostBuffer.Append(_Char);
+                        HostIndex++;
+                    }
+                }
+                if (HostBuffer.Length != 0)
+                {
+                    OmniBoxOverlayText.Inlines.Add(new Run(HostBuffer.ToString()) { Foreground = IsNormal ? FontBrush : App.Instance.OrangeColor });
+                    HostBuffer.Clear();
+                }
+            }
+            else
+                OmniBoxOverlayText.Inlines.Add(new Run(UseModernURL && Scheme == "slbr" ? Host.ToString().ToTitleCase() : Host.ToString()) { Foreground = FontBrush });
+
+            if (HostEnd >= 0)
+            {
+                if (UseModernURL)
+                {
+                    if (Scheme == "slbr")
+                        OmniBoxOverlayText.Inlines.Add(new Run(Uri.UnescapeDataString(_Span[HostEnd..]).Replace("/", " / ").ToTitleCase()) { Foreground = GrayBrush });
+                    else if (!string.IsNullOrEmpty(Title))
+                    {
+                        if (Title == Utils.CleanUrl(Address, false, false, false, false, true))
+                            OmniBoxOverlayText.Inlines.Add(new Run(Uri.UnescapeDataString(_Span[HostEnd..]).Replace("/", " / ").ToTitleCase()) { Foreground = GrayBrush });
+                        else
+                            OmniBoxOverlayText.Inlines.Add(new Run(" / " + Title) { Foreground = GrayBrush });
+                    }
+                }
+                else
+                    OmniBoxOverlayText.Inlines.Add(new Run(Uri.UnescapeDataString(_Span[HostEnd..])) { Foreground = GrayBrush });
+            }
+        }
+
+        bool OmniBoxFocused;
+        bool OmniBoxHovered;
+
+        Size MaximizedSize = Size.Empty;
+        private void CoreContainer_SizeChanged(object sender, SizeChangedEventArgs e)
+        {
+            Size NewSize = new(CoreContainerSizeEmulator.ActualWidth, CoreContainerSizeEmulator.ActualHeight);
+            if (MaximizedSize == Size.Empty)
+                MaximizedSize = NewSize;
+            Size Percentage = new(NewSize.Width / MaximizedSize.Width, NewSize.Height / MaximizedSize.Height);
+
+            SizeEmulatorColumn1.MaxWidth = 900 * Percentage.Width;
+            SizeEmulatorColumn2.MaxWidth = 900 * Percentage.Width;
+            SizeEmulatorRow1.MaxHeight = 400 * Percentage.Height;
+            SizeEmulatorRow2.MaxHeight = 400 * Percentage.Height;
+
+            SizeEmulatorColumn1.Width = new GridLength(0);
+            SizeEmulatorColumn2.Width = new GridLength(0);
+            SizeEmulatorRow1.Height = new GridLength(0);
+            SizeEmulatorRow2.Height = new GridLength(0);
+        }
+
+        public async void SetAppearance(Theme _Theme)
+        {
+            if (Tab.Icon != null && !IsUnthemedIcon)
+            {
+                (BitmapSource, bool) IconData = await App.Instance.SetIcon(WebView?.IsLoading ?? false, "", Address, Private);
+                SetIcon(IconData.Item1, IconData.Item2);
+            }
+            SetFavouritesBarVisibility();
+            SetDownloadsButtonVisibility();
+            UpdateDownloadsButtonForeground();
+            HomeButton.Visibility = App.Instance.AllowHomeButton ? Visibility.Visible : Visibility.Collapsed;
+            QRButton.Visibility = App.Instance.AllowQRButton ? Visibility.Visible : Visibility.Collapsed;
+            WebEngineButton.Visibility = App.Instance.AllowWebEngineButton ? Visibility.Visible : Visibility.Collapsed;
+            if (!IsLoading)
+                TranslateButton.Visibility = !Private && App.Instance.AllowTranslateButton && !Address.StartsWith("slbr:") ? Visibility.Visible : Visibility.Collapsed;
+
+            if (WebView != null && WebView.IsBrowserInitialized)
+            {
+                SetDarkMode(_Theme.DarkWebPage);
+                ReaderModeButton.Visibility = App.Instance.AllowReaderModeButton ? (WebView.CanExecuteJavascript && (await IsArticle()) ? Visibility.Visible : Visibility.Collapsed) : Visibility.Collapsed;
+            }
+            else
+                ReaderModeButton.Visibility = Visibility.Collapsed;
+            _NewsFeed?.ApplyTheme(_Theme);
+
+            if (App.Instance.ShowExtensionButton == 0)
+                ExtensionsButton.Visibility = App.Instance.ExtensionManager.GetExtensions(WebView?.Engine ?? (WebEngineType)App.Instance.GlobalSave.GetInt("WebEngine")).Count != 0 ? Visibility.Visible : Visibility.Collapsed;
+            else if (App.Instance.ShowExtensionButton == 1)
+                ExtensionsButton.Visibility = Visibility.Visible;
+            else
+                ExtensionsButton.Visibility = Visibility.Collapsed;
+
+            if (App.Instance.TabAlignment == 1)
+            {
+                InfoBarContainer.Margin = new Thickness(App.Instance.VerticalTabWidth, 0, 0, 0);
+                WebContainer.Margin = new Thickness(App.Instance.VerticalTabWidth, 0, 0, 0);
+                WebContainerBorder.BorderThickness = new Thickness(1, 0, 0, 0);
+                NewTabButton.Visibility = Visibility.Visible;
+            }
+
+            (PageOverlayControl as IPageOverlay)?.ApplyTheme(_Theme);
+
+            Resources["PrimaryBrushColor"] = _Theme.PrimaryColor;
+            Resources["SecondaryBrushColor"] = _Theme.SecondaryColor;
+            Resources["BorderBrushColor"] = _Theme.BorderColor;
+            Resources["GrayBrushColor"] = _Theme.GrayColor;
+            Resources["FontBrushColor"] = _Theme.FontColor;
+            Resources["IndicatorBrushColor"] = _Theme.IndicatorColor;
+        }
+
+        private bool Disposed = false;
+
+        public void Dispose()
+        {
+            Dispose(true);
+            GC.SuppressFinalize(this);
+        }
+
+        protected virtual void Dispose(bool Disposing)
+        {
+            if (!Disposed)
+            {
+                if (Disposing)
+                {
+                    DisposeBrowserCore();
+                    LoadingStoryboard.Remove();
+                    DownloadsPopup.ItemsSource = null;
+                    FavouritesPanel.ItemsSource = null;
+                    FavouriteListMenu.Collection = null;
+                    HistoryListMenu.Collection = null;
+                    ExtensionsMenu.ItemsSource = null;
+                    InfoBarList.ItemsSource = null;
+                }
+                Disposed = true;
+            }
+        }
+
+        ~Browser()
+        {
+            Dispose(false);
+        }
+
+        public void DisposeBrowserCore()
+        {
+            SetCustomTheme(null);
+            SmartSuggestionCancellation?.Cancel();
+            OmniBoxFastTimer?.Stop();
+            OmniBoxSmartTimer?.Stop();
+
+            ToggleSideBar(true);
+            CoreContainer.Children.Clear();
+            SideBarCoreContainer.Children.Clear();
+
+            if (WebView != null)
+            {
+                IWebView DisposingWebView = WebView;
+                WebView = null;
+                //WARNING: Prevent renavigation.
+                if (DisposingWebView.IsBrowserInitialized)
+                    Address = DisposingWebView.Address;
+                DisposingWebView?.IsBrowserInitializedChanged -= WebView_IsBrowserInitializedChanged;
+                //DisposingWebView?.Control.PreviewMouseWheel -= Chromium_PreviewMouseWheel;
+
+                DisposingWebView?.FaviconChanged -= WebView_FaviconChanged;
+                DisposingWebView?.AuthenticationRequested -= WebView_AuthenticationRequested;
+                DisposingWebView?.BeforeNavigation -= WebView_BeforeNavigation;
+                DisposingWebView?.ContextMenuRequested -= WebView_ContextMenuRequested;
+                DisposingWebView?.ExternalProtocolRequested -= WebView_ExternalProtocolRequested;
+                //DisposingWebView?.FindResult -= WebView_FindResult;
+                DisposingWebView?.FrameLoadStart -= WebView_FrameLoadStart;
+                DisposingWebView?.FullscreenChanged -= WebView_FullscreenChanged;
+                DisposingWebView?.AddressChanged -= WebView_AddressChanged;
+                DisposingWebView?.JavaScriptMessageReceived -= WebView_JavaScriptMessageReceived;
+                DisposingWebView?.LoadingStateChanged -= WebView_LoadingStateChanged;
+                DisposingWebView?.NavigationError -= WebView_NavigationError;
+                DisposingWebView?.NewTabRequested -= WebView_NewTabRequested;
+                DisposingWebView?.PermissionRequested -= WebView_PermissionRequested;
+                DisposingWebView?.ResourceLoaded -= WebView_ResourceLoaded;
+                //DisposingWebView?.ResponseIntercepted -= WebView_ResponseIntercepted;
+                DisposingWebView?.ResourceRequested -= WebView_ResourceRequested;
+                //DisposingWebView?.ResourceResponded -= WebView_ResourceResponded;
+                DisposingWebView?.ScriptDialogOpened -= WebView_ScriptDialogOpened;
+                DisposingWebView?.StatusMessage -= WebView_StatusMessage;
+                DisposingWebView?.TitleChanged -= WebView_TitleChanged;
+
+                DisposingWebView?.Dispose();
+            }
+            PageOverlay?.Dispose();
+            PageOverlay = null;
+        }
+
+        private void InspectorDockDropdown_SelectionChanged(object sender, SelectionChangedEventArgs e)
+        {
+            Action(Actions.SetSideBarDock, (3 - SideBarDockDropdown.SelectedIndex).ToString());
+        }
+
+        private ObservableCollection<OmniSuggestion> Suggestions = [];
+        private DispatcherTimer OmniBoxFastTimer;
+        private DispatcherTimer OmniBoxSmartTimer;
+        bool OmniBoxIsDropdown = false;
+
+        private CancellationTokenSource? SmartSuggestionCancellation;
+
+        public void ShowOmniBoxSuggestions()
+        {
+            string CurrentText = OmniBoxText;
+            if (Suggestions.FirstOrDefault()?.Display == CurrentText)
+                return;
+            OmniBoxStatus.Visibility = Visibility.Collapsed;
+            Suggestions.Clear();
+            SmartSuggestionCancellation?.Cancel();
+            SmartSuggestionCancellation?.Dispose();
+            SmartSuggestionCancellation = null;
+            OmniBoxFastTimer?.Stop();
+            OmniBoxSmartTimer?.Stop();
+            string ProcessedText = CurrentText.Trim();
+            if (!string.IsNullOrEmpty(ProcessedText))
+            {
+                SolidColorBrush LinkColor = (SolidColorBrush)FindResource("IndicatorBrush");
+                string FirstType = App.GetMiniSearchType(ProcessedText);
+                if (FirstType == "W")
+                {
+                    Suggestions.Add(App.GenerateSuggestion(ProcessedText, FirstType, LinkColor, "- Visit", null, OmniBoxOverrideSearch));
+                    Suggestions.Add(App.GenerateSuggestion(ProcessedText, "S", null, "- Search", $"search:{ProcessedText}", OmniBoxOverrideSearch));
+                }
+                else
+                {
+                    Suggestions.Add(App.GenerateSuggestion(ProcessedText, FirstType, null, "", null, OmniBoxOverrideSearch));
+                    if (App.Instance.SmartSuggestions)
+                    {
+                        foreach (Match _Match in Utils.UrlRegex().Matches(ProcessedText))
+                            Suggestions.Add(App.GenerateSuggestion(Utils.FixUrl(_Match.Value), "W", LinkColor, "- Visit", null, OmniBoxOverrideSearch));
+                    }
+                }
+                try
+                {
+                    SmartSuggestionCancellation?.Cancel();
+                    SmartSuggestionCancellation?.Dispose();
+                    SmartSuggestionCancellation = null;
+
+                    OmniBoxSmartTimer?.Stop();
+                    if (OmniBoxOverrideSearch?.Host == "__Program__")
+                    {
+                        ProcessedText = ProcessedText.ToLowerInvariant();
+                        switch (OmniBoxOverrideSearch.Name)
+                        {
+                            case "Tabs":
+                                List<BrowserTabItem> TabCollection = [];
+                                foreach (MainWindow _Window in App.Instance.AllWindows)
+                                {
+                                    TabCollection.AddRange(_Window.Tabs.Where(i => i.Type == BrowserTabType.Navigation && i.Content != null && (i.Header.ToLowerInvariant().Contains(CurrentText) || (i.Content?.Address.ToLowerInvariant().Contains(CurrentText) ?? false))));
+                                    if (TabCollection.Count >= 10)
+                                        break;
+                                }
+                                foreach (BrowserTabItem Entry in TabCollection.Take(10))
+                                    Suggestions.Add(App.GenerateSuggestion(Entry.Header, "T", LinkColor, $"- {Entry.Content?.Address}", Entry.Content?.Address, OmniBoxOverrideSearch, Entry.ID.ToString()));
+                                break;
+                            case "History":
+                                foreach (ActionStorage Entry in App.Instance.History.Where(i => (i.Name?.ToLowerInvariant().Contains(CurrentText) ?? false) || (i.Tooltip?.ToLowerInvariant().Contains(CurrentText) ?? false)).Take(10))
+                                    Suggestions.Add(App.GenerateSuggestion(Entry.Name, "W", LinkColor, $"- {Entry.Tooltip}", Entry.Tooltip, OmniBoxOverrideSearch));
+                                break;
+                            case "Favourites":
+                                foreach (Favourite Entry in App.Instance.FavouriteManager.UrlCache.Where(i => i.Key.Contains(CurrentText) || i.Key.Contains(CurrentText)).Take(10).Select(i => i.Value))
+                                    Suggestions.Add(App.GenerateSuggestion(Entry.Name, "W", LinkColor, $"- {Entry.Url}", Entry.Url, OmniBoxOverrideSearch));
+                                break;
+                        }
+                    }
+                    else if (ProcessedText.Length <= 60)
+                    {
+                        OmniBoxFastTimer.Start();
+                        if (App.Instance.SmartSuggestions && OmniBoxOverrideSearch == null)
+                            OmniBoxSmartTimer.Start();
+                    }
+                }
+                catch { }
+                if (OmniBoxOverrideSearch == null)
+                {
+                    if (OmniBoxText.StartsWith('@'))
+                    {
+                        foreach (SearchProvider Search in App.Instance.AllSystemSearchEngines)
+                        {
+                            if (OmniBoxText.Length > 1)
+                            {
+                                if (Search.Name.StartsWith(OmniBoxText[1..], StringComparison.OrdinalIgnoreCase))
+                                {
+                                    OmniSuggestion Suggestion = new() { ProviderOverride = Search, Text = $"@{Search.Name.ToLower()}", Display = $"@{Search.Name.ToLower()}", SubText = $"- Search {Search.Name}" };
+                                    switch (Search.Name)
+                                    {
+                                        case "Tabs":
+                                            Suggestion.Icon = "\xec6c";
+                                            break;
+                                        case "History":
+                                            Suggestion.Icon = "\xe81c";
+                                            break;
+                                        case "Favourites":
+                                            Suggestion.Icon = "\xeb51";
+                                            break;
+                                    }
+                                    Suggestions.Add(Suggestion);
+                                    OmniBoxStatus.Tag = "S" + App.Instance.AllSystemSearchEngines.IndexOf(Search);
+                                    OmniBoxStatusText.Text = $"Search {Search.Name}";
+                                    OmniBoxStatus.Visibility = Visibility.Visible;
+                                    break;
+                                }
+                            }
+                            else
+                            {
+                                OmniSuggestion Suggestion = new() { ProviderOverride = Search, Text = $"@{Search.Name.ToLower()}", Display = $"@{Search.Name.ToLower()}", SubText = $"- Search {Search.Name}" };
+                                switch (Search.Name)
+                                {
+                                    case "Tabs":
+                                        Suggestion.Icon = "\xec6c";
+                                        break;
+                                    case "History":
+                                        Suggestion.Icon = "\xe81c";
+                                        break;
+                                    case "Favourites":
+                                        Suggestion.Icon = "\xeb51";
+                                        break;
+                                }
+                                Suggestions.Add(Suggestion);
+                            }
+                        }
+                    }
+                    if (OmniBoxStatus.Visibility == Visibility.Collapsed)
+                    {
+                        foreach (SearchProvider Search in App.Instance.SearchEngines)
+                        {
+                            if (Search.Name.StartsWith(OmniBoxText, StringComparison.OrdinalIgnoreCase))
+                            {
+                                OmniBoxStatus.Tag = App.Instance.SearchEngines.IndexOf(Search);
+                                OmniBoxStatusText.Text = $"Search {Search.Name}";
+                                OmniBoxStatus.Visibility = Visibility.Visible;
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+            else
+            {
+                if (OmniBoxOverrideSearch != null && OmniBoxOverrideSearch.Host == "__Program__")
+                {
+                    SolidColorBrush LinkColor = (SolidColorBrush)FindResource("IndicatorBrush");
+                    switch (OmniBoxOverrideSearch.Name)
+                    {
+                        case "Tabs":
+                            break;
+                        case "History":
+                            foreach (ActionStorage Entry in App.Instance.History.Take(10))
+                                Suggestions.Add(App.GenerateSuggestion(Entry.Name, "W", LinkColor, $"- {Entry.Tooltip}", Entry.Tooltip, OmniBoxOverrideSearch));
+                            break;
+                        case "Favourites":
+                            foreach (Favourite Entry in App.Instance.FavouriteManager.UrlCache.Take(10).Select(i => i.Value))
+                                Suggestions.Add(App.GenerateSuggestion(Entry.Name, "W", LinkColor, $"- {Entry.Url}", Entry.Url, OmniBoxOverrideSearch));
+                            break;
+                    }
+                }
+            }
+
+            OmniBox.IsDropDownOpen = Suggestions.Count > 0;
+            OmniBoxIsDropdown = true;
+            OmniBox.Focus();
+            if (OmniBox.IsDropDownOpen)
+            {
+                OmniBoxPopup.HorizontalOffset = -(SiteInformationPopupButton.ActualWidth + 8);
+                OmniBoxPopupDropDown.Width = OmniBoxContainer.ActualWidth;
+            }
+        }
+
+        private bool OmniBoxSelectionByMouse;
+
+        private void OmniBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
+        {
+            if (e.AddedItems.Count == 0)
+                return;
+            if (OmniBox.SelectedItem is not OmniSuggestion Suggestion)
+                return;
+            bool Exists = Suggestions.Contains(Suggestion);
+            if (OmniBoxSelectionByMouse && Exists)
+            {
+                if (Suggestion.ProviderOverride == OmniBoxOverrideSearch || Suggestion.ProviderOverride != null && !string.IsNullOrEmpty(Suggestion.Hidden))
+                {
+                    if (Suggestion.ProviderOverride != null && Suggestion.ProviderOverride.Host == "__Program__" && Suggestion.ProviderOverride.Name == "Tabs")
+                        App.Instance.SwitchTab(int.Parse(Suggestion.Hidden));
+                    else if (Suggestion.Text.Trim().Length > 0)
+                    {
+                        OmniBoxText = Suggestion.Text;
+                        OmniBox.Text = Suggestion.Text;
+                        OmniBoxEnter();
+                    }
+                }
+                else
+                {
+                    OmniBoxText = string.Empty;
+                    OmniBox.Text = string.Empty;
+                    OmniBoxStatus.Visibility = Visibility.Collapsed;
+                    OmniBoxOverrideSearch = Suggestion.ProviderOverride;
+                    SetTemporarySiteInformation();
+                    ShowOmniBoxSuggestions();
+                }
+            }
+            else
+            {
+                if (Suggestion.ProviderOverride != OmniBoxOverrideSearch)
+                {
+                    OmniBoxStatus.Visibility = Visibility.Collapsed;
+                    OmniBoxOverrideSearch = Suggestion.ProviderOverride;
+                    SetTemporarySiteInformation();
+                }
+                else if (!Exists)
+                    e.Handled = true;
+            }
+            OmniBoxSelectionByMouse = false;
+        }
+
+        private async void OmniBoxFastTimer_Tick(object? sender, EventArgs e)
+        {
+            OmniBoxFastTimer?.Stop();
+            if (!OmniBox.IsDropDownOpen)
+                return;
+            string CurrentText = OmniBoxText.Trim();
+            try
+            {
+                string SuggestionsUrl = string.Format(OmniBoxOverrideSearch?.SuggestUrl ?? App.Instance.DefaultSearchProvider.SuggestUrl, Uri.EscapeDataString(CurrentText.AsSpan()));
+                if (!string.IsNullOrEmpty(SuggestionsUrl))
+                {
+                    using (HttpRequestMessage Request = new(HttpMethod.Get, SuggestionsUrl))
+                    {
+                        Request.Headers.UserAgent.ParseAdd(UserAgentGenerator.BuildUserAgentFromProduct(UserAgentGenerator.BuildChromeBrand()));
+                        using var Response = await App.MiniHttpClient.SendAsync(Request);
+                        Response.EnsureSuccessStatusCode();
+
+                        string ResponseText = await Response.Content.ReadAsStringAsync();
+
+                        using JsonDocument Document = JsonDocument.Parse(ResponseText);
+                        SolidColorBrush LinkColor = (SolidColorBrush)FindResource("IndicatorBrush");
+
+                        JsonElement Root = Document.RootElement;
+                        //https://source.chromium.org/chromium/chromium/src/+/main:components/omnibox/browser/search_suggestion_parser.cc
+                        if (Root.ValueKind == JsonValueKind.Array && Root.GetArrayLength() >= 2)
+                        {
+                            Dictionary<string, OmniSuggestion> ExistingSuggestions = Suggestions.Skip(1).ToDictionary(i => i.Text, i => i);
+
+                            JsonElement SuggestionArray = Root[1];
+                            JsonElement DescriptionArray = Root.GetArrayLength() >= 3 ? Root[2] : default;
+
+                            JsonElement TypeArray = default;
+                            JsonElement DetailArray = default;
+
+                            if (Root.GetArrayLength() >= 5 && Root[4].ValueKind == JsonValueKind.Object)
+                            {
+                                Root[4].TryGetProperty("google:suggesttype", out TypeArray);
+                                Root[4].TryGetProperty("google:suggestdetail", out DetailArray);
+                            }
+
+                            int Index = 0;
+                            foreach (JsonElement SuggestionElement in SuggestionArray.EnumerateArray())
+                            {
+                                string Suggestion = string.Empty;
+                                string SuggestionType = "S";
+                                string DisplayText = string.Empty;
+                                string? ActualText = null;
+                                string SubText = "";
+                                string? ImageUrl = null;
+
+                                //https://github.com/brave/brave-browser/issues/29997
+                                bool IsBraveObject = SuggestionElement.ValueKind == JsonValueKind.Object;
+                                if (IsBraveObject)
+                                {
+                                    if (SuggestionElement.TryGetProperty("q", out JsonElement QueryElement))
+                                    {
+                                        string? ExtractedQuery = QueryElement.GetString() ?? null;
+                                        if (!string.IsNullOrEmpty(ExtractedQuery))
+                                        {
+                                            Suggestion = ExtractedQuery;
+                                            DisplayText = Suggestion;
+                                        }
+                                    }
+                                }
+                                else
+                                {
+                                    Suggestion = SuggestionElement.GetString() ?? string.Empty;
+                                    DisplayText = Suggestion;
+                                }
+                                if (string.IsNullOrEmpty(Suggestion))
+                                {
+                                    Index++;
+                                    continue;
+                                }
+
+                                if (App.Instance.RichSuggestions)
+                                {
+                                    if (IsBraveObject)
+                                    {
+                                        if (SuggestionElement.TryGetProperty("name", out JsonElement TitleElement))
+                                        {
+                                            string? ExtractedDisplay = TitleElement.GetString() ?? null;
+                                            if (!string.IsNullOrEmpty(ExtractedDisplay))
+                                            {
+                                                DisplayText = ExtractedDisplay;
+                                                ActualText = Suggestion;
+                                            }
+                                        }
+                                        //if (SuggestionElement.TryGetProperty("is_entity", out JsonElement EntityElement) && EntityElement.GetBoolean())
+                                        if (SuggestionElement.TryGetProperty("desc", out JsonElement SubTextElement))
+                                        {
+                                            string? ExtractedSubText = SubTextElement.GetString();
+                                            if (!string.IsNullOrEmpty(ExtractedSubText))
+                                                SubText = "- " + ExtractedSubText;
+                                        }
+                                        if (SuggestionElement.TryGetProperty("img", out JsonElement ImageElement))
+                                        {
+                                            string? ExtractedImage = ImageElement.GetString() ?? null;
+                                            if (!string.IsNullOrEmpty(ExtractedImage))
+                                                ImageUrl = ExtractedImage;
+                                        }
+                                    }
+                                    else if (TypeArray.ValueKind == JsonValueKind.Array && Index < TypeArray.GetArrayLength())
+                                    {
+                                        string GoogleType = TypeArray[Index].GetString() ?? string.Empty;
+                                        if (GoogleType == "NAVIGATION")
+                                            SuggestionType = "W";
+                                        //else if (GoogleType == "ENTITY")
+                                        else if (GoogleType == "CALCULATOR")
+                                        {
+                                            Index++;
+                                            continue;
+                                        }
+                                    }
+                                }
+
+                                if (SuggestionType == "S")
+                                    SuggestionType = App.GetMiniSearchType(Suggestion);
+
+                                if (!IsBraveObject && App.Instance.RichSuggestions && DetailArray.ValueKind == JsonValueKind.Array && Index < DetailArray.GetArrayLength())
+                                {
+                                    JsonElement DetailElement = DetailArray[Index];
+                                    if (DetailElement.ValueKind == JsonValueKind.Object)
+                                    {
+                                        //NOTE: Utilized by Google.
+                                        if (DetailElement.TryGetProperty("google:entityinfo", out JsonElement EntityInfoElement))
+                                        {
+                                            string? Base64Entity = EntityInfoElement.GetString();
+                                            if (!string.IsNullOrEmpty(Base64Entity))
+                                            {
+                                                var (ExtractedDisplay, ExtractedSubText, ExtractedImage) = ParseEntityInfo(Base64Entity);
+                                                if (!string.IsNullOrEmpty(ExtractedDisplay))
+                                                {
+                                                    DisplayText = ExtractedDisplay;
+                                                    ActualText = Suggestion;
+                                                }
+                                                if (!string.IsNullOrEmpty(ExtractedSubText))
+                                                    SubText = "- " + ExtractedSubText;
+                                                if (!string.IsNullOrEmpty(ExtractedImage))
+                                                    ImageUrl = ExtractedImage;
+                                            }
+                                        }
+                                        else
+                                        {
+                                            //NOTE: Utilized by Bing.
+                                            if (DetailElement.TryGetProperty("t", out JsonElement TitleElement) && TitleElement.ValueKind == JsonValueKind.String)
+                                            {
+                                                string? ExtractedDisplay = TitleElement.GetString() ?? null;
+                                                if (!string.IsNullOrEmpty(ExtractedDisplay))
+                                                    DisplayText = ExtractedDisplay;
+                                            }
+                                            if (DetailElement.TryGetProperty("a", out JsonElement SubTextElement) && SubTextElement.ValueKind == JsonValueKind.String)
+                                            {
+                                                string? ExtractedSubText = SubTextElement.GetString() ?? null;
+                                                if (!string.IsNullOrEmpty(ExtractedSubText))
+                                                    SubText = "- " + ExtractedSubText;
+                                            }
+                                            if (DetailElement.TryGetProperty("i", out JsonElement ImageUrlElement) && ImageUrlElement.ValueKind == JsonValueKind.String)
+                                            {
+                                                string? ExtractedImage = ImageUrlElement.GetString() ?? null;
+                                                if (!string.IsNullOrEmpty(ExtractedImage))
+                                                    ImageUrl = ExtractedImage;
+                                            }
+                                        }
+                                    }
+                                }
+                                if (SuggestionType == "W")
+                                {
+                                    ActualText = Suggestion;
+                                    if (App.Instance.RichSuggestions && DescriptionArray.ValueKind == JsonValueKind.Array && Index < DescriptionArray.GetArrayLength())
+                                    {
+                                        string? Description = DescriptionArray[Index].GetString() ?? null;
+                                        if (!string.IsNullOrEmpty(Description))
+                                            DisplayText = Description;
+                                        else
+                                            DisplayText = Utils.CleanUrl(DisplayText);
+                                    }
+                                    else
+                                        DisplayText = Utils.CleanUrl(DisplayText);
+                                }
+                                string TargetTextKey = ActualText ?? DisplayText;
+
+                                if (ExistingSuggestions.TryGetValue(TargetTextKey, out var ExistingItem))
+                                    Suggestions.Remove(ExistingItem);
+
+                                OmniSuggestion NewSuggestion = App.GenerateSuggestion(
+                                    DisplayText,
+                                    SuggestionType,
+                                    SuggestionType == "W" ? LinkColor : null,
+                                    SubText,
+                                    ActualText,
+                                    OmniBoxOverrideSearch,
+                                    null,
+                                    ImageUrl
+                                );
+                                Suggestions.Add(NewSuggestion);
+                                ExistingSuggestions[TargetTextKey] = NewSuggestion;
+                                Index++;
+                            }
+                        }
+                    }
+                }
+            }
+            catch { }
+        }
+        public static (string? Display, string? SubText, string? ImageUrl) ParseEntityInfo(string Input)
+        {
+            if (!string.IsNullOrEmpty(Input))
+            {
+                try
+                {
+                    ProtobufReader Reader = new(Convert.FromBase64String(Input.Replace("\\u003d", "=")));
+                    string? SubText = null;
+                    string? ImageUrl = null;
+                    string? Display = null;
+                    bool HasSubText = false;
+                    bool HasImageUrl = false;
+                    bool HasDisplay = false;
+                    while (!Reader.IsConsumed)
+                    {
+                        if (!Reader.TryReadTag(out int FieldNumber, out int WireType))
+                            break;
+                        /*if (FieldNumber > 7)//WARNING: Do not apply, protobuf fields are not constantly in ascending numerical order.
+                            break;*/
+                        //Debug.WriteLine($"{WireType} {FieldNumber}");
+                        if (WireType == 2)
+                        {
+                            ReadOnlySpan<byte> Slice = Reader.ReadLengthDelimited();
+                            //Debug.WriteLine($"{FieldNumber} {Encoding.UTF8.GetString(Slice)}");
+                            switch (FieldNumber)
+                            {
+                                case 2:
+                                    //WARNING: Do not optimize as Encoding.UTF8.GetString(Reader.ReadLengthDelimited())
+                                    SubText = Encoding.UTF8.GetString(Slice);
+                                    HasSubText = true;
+                                    break;
+                                case 6:
+                                    ImageUrl = Encoding.UTF8.GetString(Slice);
+                                    HasImageUrl = true;
+                                    break;
+                                case 7:
+                                    Display = Encoding.UTF8.GetString(Slice);
+                                    HasDisplay = true;
+                                    break;
+                                //case 17: Affiliated URL.
+                            }
+                        }
+                        else
+                            Reader.SkipField(WireType);
+                        if (HasSubText && HasImageUrl && HasDisplay)
+                            break;
+                    }
+                    return (Display, SubText, ImageUrl);
+                }
+                catch { }
+            }
+            return (null, null, null);
+        }
+        /*private async void OmniBoxFastTimer_Tick(object? sender, EventArgs e)
+        {
+            OmniBoxFastTimer?.Stop();
+            if (!OmniBox.IsDropDownOpen)
+                return;
+            string CurrentText = OmniBoxText.Trim();
+            SolidColorBrush Color = (SolidColorBrush)FindResource("FontBrush");
+            SolidColorBrush LinkColor = (SolidColorBrush)FindResource("IndicatorBrush");
+            List<(int, OmniSuggestion)> ScoredSuggestions = [];
+            SearchProvider TabsSearchProvider = App.Instance.AllSystemSearchEngines.First(i => i.Name == "Tabs");
+            SearchProvider HistorySearchProvider = App.Instance.AllSystemSearchEngines.First(i => i.Name == "History");
+            SearchProvider FavouritesSearchProvider = App.Instance.AllSystemSearchEngines.First(i => i.Name == "Favourites");
+            try
+            {
+                foreach (MainWindow _Window in App.Instance.AllWindows)
+                {
+                    BrowserTabItem Tab = _Window.Tabs.First(i => i.Type == BrowserTabType.Navigation && i.Content != null && (i.Header.ToLowerInvariant().Contains(CurrentText) || (i.Content?.Address.ToLowerInvariant().Contains(CurrentText) ?? false)));
+                    if (Tab != null)
+                        ScoredSuggestions.Add((0, App.GenerateSuggestion(Tab.Header, "T", LinkColor, $"- {Tab.Content?.Address}", Tab.Content?.Address, TabsSearchProvider, Tab.ID.ToString())));
+                }
+                List<ActionStorage> HistoryCollection = App.Instance.History.Where(i => (i.Name?.ToLowerInvariant().Contains(CurrentText) ?? false) || (i.Tooltip?.ToLowerInvariant().Contains(CurrentText) ?? false)).ToList();
+                foreach (ActionStorage Entry in HistoryCollection.Take(1))
+                    ScoredSuggestions.Add((0, App.GenerateSuggestion(Entry.Name, "W", LinkColor, $"- {Entry.Tooltip}", Entry.Tooltip, HistorySearchProvider)));
+                            
+                List<Favourite> FavouritesCollection = App.Instance.Favourites.Where(i => i.Type == "url" && ((i.Name?.ToLowerInvariant().Contains(CurrentText) ?? false) || (i.Url?.ToLowerInvariant().Contains(CurrentText) ?? false))).ToList();
+                foreach (Favourite Entry in FavouritesCollection.Take(2))
+                    ScoredSuggestions.Add((0, App.GenerateSuggestion(Entry.Name, "W", LinkColor, $"- {Entry.Url}", Entry.Url, FavouritesSearchProvider)));
+                string SuggestionsUrl = string.Format(OmniBoxOverrideSearch?.SuggestUrl ?? App.Instance.DefaultSearchProvider.SuggestUrl, Uri.EscapeDataString(CurrentText));
+                if (!string.IsNullOrEmpty(SuggestionsUrl))
+                {
+                    string ResponseText = await App.MiniHttpClient.GetStringAsync(SuggestionsUrl);
+                    using (JsonDocument Document = JsonDocument.Parse(ResponseText))
+                    {
+                        foreach (JsonElement Suggestion in Document.RootElement[1].EnumerateArray())
+                        {
+                            string SuggestionStr = Suggestion.GetString();
+                            string SuggestionType = App.GetMiniSearchType(SuggestionStr);
+                            ScoredSuggestions.Add((0, App.GenerateSuggestion(SuggestionStr, SuggestionType, SuggestionType == "W" ? LinkColor : Color, "", null, OmniBoxOverrideSearch)));
+                        }
+                    }
+                }
+            }
+            catch { }
+            for (int i = 0; i < ScoredSuggestions.Count; i++)
+            {
+                //TODO: Calculate score based on title & subtext.
+                var Suggestion = ScoredSuggestions[i];
+                int InitialScore = CalculateSuggestionScore(CurrentText, Suggestion.Item2.Text);
+                Suggestion.Item1 += InitialScore;
+                if (InitialScore == 0 && !string.IsNullOrEmpty(Suggestion.Item2.SubText))
+                    Suggestion.Item1 += CalculateSuggestionScore(CurrentText, Suggestion.Item2.SubText) / 2;
+            }
+            var FinalResults = ScoredSuggestions.OrderByDescending(r => r.Item1).Take(10);
+            var ExistingSuggestions = Suggestions.Select(i => i.Text);
+            foreach (var Result in FinalResults)
+            {
+                if (!ExistingSuggestions.Contains(Result.Item2.Text))
+                    Suggestions.Add(Result.Item2);
+            }
+        }*/
+
+        private async void OmniBoxSmartTimer_Tick(object? sender, EventArgs e)
+        {
+            OmniBoxSmartTimer?.Stop();
+            if (!OmniBox.IsDropDownOpen)
+                return;
+            string Text = OmniBoxText.Trim();
+            int Type = App.GetSmartType(Text);
+            if (Type == -1)
+                return;
+            SmartSuggestionCancellation?.Cancel();
+            SmartSuggestionCancellation?.Dispose();
+            SmartSuggestionCancellation = new CancellationTokenSource();
+            var Token = SmartSuggestionCancellation.Token;
+            OmniSuggestion Suggestion = await App.Instance.GenerateSmartSuggestion(Text, Type);
+            if (!Token.IsCancellationRequested)
+            {
+                Suggestions.RemoveAt(0);
+                Suggestions.Insert(0, Suggestion);
+            }
+        }
+
+        private void OmniBox_DropDownOpened(object sender, EventArgs e)
+        {
+            WebView?.Control.Focusable = false;
+            OmniBoxPopup.HorizontalOffset = -(SiteInformationPopupButton.ActualWidth + 8);// + 4 + 4
+            OmniBoxPopupDropDown.Width = OmniBoxContainer.ActualWidth;
+        }
+
+        private void OmniBox_DropDownClosed(object sender, EventArgs e)
+        {
+            OmniBoxSelectionByMouse = false;
+            WebView?.Control.Focusable = true;
+        }
+
+        int OmniBoxCaretIndex = 0;
+        int OmniBoxSelectionStart = 0;
+        int OmniBoxSelectionLength = 0;
+        string OmniBoxText = string.Empty;
+
+        private void Browser_Loaded(object sender, RoutedEventArgs e)
+        {
+            //TODO: Replace unbearably problematic ComboBox-based omni box with custom solution to avoid the implementation of a gazillion workarounds.
+            Loaded -= Browser_Loaded;
+            MaxHeight = Tab.ParentWindow.TabsUI.ActualHeight;
+            OmniTextBox = OmniBox.Template.FindName("PART_EditableTextBox", OmniBox) as TextBox;
+            OmniTextBox.PreviewKeyDown += (sender, args) =>
+            {
+                Dispatcher.BeginInvoke(new Action(() =>
+                {
+                    OmniBoxText = OmniTextBox.Text;
+                    OmniBoxCaretIndex = OmniTextBox.CaretIndex;
+                    OmniBoxSelectionStart = OmniTextBox.SelectionStart;
+                    OmniBoxSelectionLength = OmniTextBox.SelectionLength;
+                }), DispatcherPriority.Input);
+            };
+            /*OmniTextBox.PreviewKeyDown += (s, e) => Debug.WriteLine("OmniBox: PreviewKeyDown");
+            OmniTextBox.PreviewKeyUp += (s, e) => Debug.WriteLine("OmniBox: PreviewKeyUp");
+            OmniTextBox.SelectionChanged += (s, e) => Debug.WriteLine("OmniBox: SelectionChanged");
+            OmniTextBox.TextInput += (s, e) => Debug.WriteLine("OmniBox: TextInput");*/
+
+            OmniTextBox.GotKeyboardFocus += (sender, args) =>
+            {
+                args.Handled = true;
+                OmniTextBox.Text = OmniBoxText;
+                OmniTextBox.CaretIndex = OmniBoxCaretIndex;
+                OmniTextBox.SelectionStart = OmniBoxSelectionStart;
+                OmniTextBox.SelectionLength = OmniBoxSelectionLength;
+                if (!OmniBoxIsDropdown)
+                    OmniTextBox.SelectAll();
+            };
+            /*OmniTextBox.LostKeyboardFocus += (sender, args) =>
+            {
+                OmniBox.Text = OmniBoxText;
+            };*/
+            OmniBoxPopup = OmniBox.Template.FindName("Popup", OmniBox) as Popup;
+            OmniBoxPopupDropDown = OmniBox.Template.FindName("DropDown", OmniBox) as Grid;
+            OmniBoxPopupDropDown.PreviewMouseLeftButtonDown += (_, __) =>
+            {
+                OmniBoxSelectionByMouse = true;
+            };
+            OmniBox.ItemsSource = Suggestions;
+            if (Address == "slbr://newtab" || Address == "about:blank")
+            {
+                Keyboard.Focus(OmniBox);
+                OmniBox.Focus();
+            }
+        }
+        private async void LoadExtensionPopup(object sender, RoutedEventArgs e)
+        {
+            if (WebView == null)
+                return;
+            if (WebView.Engine == WebEngineType.Trident)
+            {
+                if (UnavailableExtensionInfoBar == null)
+                {
+                    UnavailableExtensionInfoBar = new() { Title = "Extension Unavailable", Description = [new() { Text = "Trident webview does not support extensions." }] };
+                    LocalInfoBars.Add(UnavailableExtensionInfoBar);
+                }
+                return;
+            }
+
+            Extension? _Extension = App.Instance.ExtensionManager.GetExtensions(WebView.Engine).FirstOrDefault(i => i.ID == ((FrameworkElement)sender).Tag.ToString());
+            if (_Extension == null)
+                return;
+            App.Instance.ExtensionManager.TriggerAction(_Extension, this, ExtensionsButton);
+        }
+
+        private void DownloadActionButton_Click(object sender, RoutedEventArgs e)
+        {
+            if (sender is FrameworkElement Element && Element.DataContext is DownloadEntry _Entry)
+            try
+            {
+                string Value = ((Button)sender).ToolTip.ToString()!;
+                    if (Value == "Cancel")
+                    {
+                        if (_Entry.Source?.Cancel != null)
+                            _Entry.Source?.Cancel();
+                    }
+                    else if (Value == "Open")
+                        Process.Start(new ProcessStartInfo("explorer.exe", $"/select, \"{_Entry.Source.FullPath}\"") { UseShellExecute = true });
+                    else if (Value == "Resume")
+                    {
+                        if (_Entry.Source?.Resume != null)
+                            _Entry.Source?.Resume();
+                    }
+                    else if (Value == "Pause")
+                    {
+                        if (_Entry.Source?.Pause != null)
+                            _Entry.Source?.Pause();
+                    }
+                }
+            catch { }
+        }
+
+        private void FavouriteButton_PreviewMouseUp(object sender, MouseButtonEventArgs e)
+        {
+            FrameworkElement Element = FindAncestorFavourite(e.OriginalSource as DependencyObject);
+            if (Element != null && Element.DataContext is Favourite _Favourite)
+            {
+                if (Element is MenuItem MenuItem)
+                {
+                    if (e.ChangedButton == MouseButton.Right)
+                    {
+                        e.Handled = true;
+                        if (Element.ContextMenu is ContextMenu TargetContextMenu)
+                        {
+                            TargetContextMenu.PlacementTarget = Element;
+                            TargetContextMenu.Placement = PlacementMode.MousePoint;
+                            TargetContextMenu.IsOpen = true;
+                        }
+                        return;
+                    }
+                    if (MenuItem.HasItems)
+                        return;
+                }
+                if (e.ChangedButton == MouseButton.Left)
+                    Navigate(_Favourite.Url);
+                else if (e.ChangedButton == MouseButton.Middle)
+                    Tab.ParentWindow.NewTab(_Favourite.Url, false, -1, Private);
+            }
+        }
+
+        private FrameworkElement FindAncestorFavourite(DependencyObject Element)
+        {
+            while (Element != null)
+            {
+                if (Element is MenuItem || Element is Button || Element is WinUI.DropDownButton)
+                    return Element as FrameworkElement;
+                Element = VisualTreeHelper.GetParent(Element);
+            }
+            return null;
+        }
+
+        private void DownloadsFolderButton_Click(object sender, RoutedEventArgs e)
+        {
+            Process.Start(new ProcessStartInfo("explorer.exe", $"/select, \"{WebViewManager.RuntimeSettings.DownloadFolderPath}\"") { UseShellExecute = true });
+        }
+
+        private void FavouriteAction_Click(object sender, RoutedEventArgs e)
+        {
+            if (sender is MenuItem _MenuItem && _MenuItem.DataContext is Favourite Favourite)
+            {
+                string Action = _MenuItem.Header.ToString();
+                if (Action == "Edit")
+                {
+                    List<InputField> Inputs = [
+                        new() { Name = "Name", IsRequired = true, Type = DialogInputType.Text, Value = Favourite.Name },
+                    ];
+                    if (Favourite.Type == "url")
+                        Inputs.Add(new() { Name = "URL", IsRequired = true, Type = DialogInputType.Text, Value = Favourite.Url });
+                    DynamicDialogWindow _DynamicDialogWindow = new("Prompt", "Edit Favourite", Inputs, "\ue70f") { Topmost = true };
+                    if (_DynamicDialogWindow.ShowDialog() == true)
+                    {
+                        Favourite.Name = _DynamicDialogWindow.InputFields[0].Value;
+                        if (Favourite.Type == "url")
+                            Favourite.Url = _DynamicDialogWindow.InputFields[1].Value.Trim();
+                    }
+                }
+                else if (Action == "Delete")
+                    App.Instance.FavouriteManager.Remove(Favourite);
+                else if (Action == "Manage favourites")
+                {
+                    //TODO: Open within selected favourite.
+                    Tab.ParentWindow.NewTab("slbr://favourites", true, Tab.ParentWindow.TabsUI.SelectedIndex + 1, Private, Tab.TabGroup);
+                }
+                else if (Favourite.Type == "folder")
+                {
+                    if (Action == "Add page")
+                        FavouriteAction(false, Favourite);
+                    else if (Action == "Add folder")
+                        App.Instance.NewFavouriteFolder(Favourite);
+                }
+            }
+        }
+
+        private void CloseInfoBarButton_Click(object sender, RoutedEventArgs e)
+        {
+            if (((FrameworkElement)sender).DataContext is InfoBar Bar)
+                CloseInfoBar(Bar);
+        }
+
+        private void CloseInfoBar(InfoBar Bar)
+        {
+            LocalInfoBars.Remove(Bar);
+            App.Instance.InfoBars.Remove(Bar);
+            if (Bar == ExtensionFailInfoBar)
+                ExtensionFailInfoBar = null;
+            if (Bar == ProprietaryCodecsInfoBar)
+                ProprietaryCodecsInfoBar = null;
+            else if (Bar == WaybackInfoBar)
+                WaybackInfoBar = null;
+            else if (Bar == UnavailableInspectorInfoBar)
+                UnavailableInspectorInfoBar = null;
+            else if (Bar == UnavailableExtensionInfoBar)
+                UnavailableExtensionInfoBar = null;
+            else if (Bar == UnavailableTranslationInfoBar)
+                UnavailableTranslationInfoBar = null;
+            else if (Bar == HomographInfoBar)
+                HomographInfoBar = null;
+            else if (Bar == EngineInitializationInfoBar)
+                EngineInitializationInfoBar = null;
+        }
+
+        InfoBar? UnavailableTranslationInfoBar;
+        InfoBar? UnavailableInspectorInfoBar;
+        InfoBar? UnavailableExtensionInfoBar;
+        InfoBar? ProprietaryCodecsInfoBar;
+        InfoBar? ExtensionFailInfoBar;
+        InfoBar? WaybackInfoBar;
+        InfoBar? HomographInfoBar;
+        InfoBar? EngineInitializationInfoBar;
+
+        public void TriggerLocationChanged()
+        {
+            UpdatePopupPlacement(FindPopup);
+        }
+
+        public void TriggerSizeChanged()
+        {
+            UpdatePopupPlacement(FindPopup);
+        }
+
+        private void InfoBarRun_PreviewMouseUp(object sender, MouseButtonEventArgs e)
+        {
+            if (((FrameworkElement)sender).DataContext is UIElementLayer Element)
+            {
+                if (Element.Command != null && Element.Command.CanExecute(null))
+                    Element.Command.Execute(null);
+            }
+        }
+
+        private CustomPopupPlacement[] FindPopupPlacement(Size PopupSize, Size TargetSize, Point Offset)
+        {
+            double X = TargetSize.Width - PopupSize.Width - 5;
+            double Y = 5;
+            if (CoreContainer.IsLoaded && VisualTreeHelper.GetParent(CoreContainer) != null)
+            {
+                try
+                {
+                    Point ContainerPosition = CoreContainer.TransformToAncestor(this).Transform(new Point(0, 0));
+                    if (ContainerPosition.X + X < 0)
+                        X = -ContainerPosition.X;
+                    if (ContainerPosition.Y + Y < 0)
+                        Y = 0;
+                }
+                catch (InvalidOperationException)
+                {
+                    X = TargetSize.Width - PopupSize.Width;
+                    Y = 5;
+                }
+            }
+
+            return [new(new Point(X, Y), PopupPrimaryAxis.Horizontal)];
+        }
+
+        private CustomPopupPlacement[] StatusBubblePopupPlacement(Size PopupSize, Size TargetSize, Point Offset)
+        {
+            double X = 5;
+            double Y = TargetSize.Height - PopupSize.Height - 5;
+
+            if (CoreContainer.IsLoaded && VisualTreeHelper.GetParent(CoreContainer) != null)
+            {
+                try
+                {
+                    Point ContainerPosition = CoreContainer.TransformToAncestor(this).Transform(new Point(0, 0));
+
+                    if (ContainerPosition.X + X < 0)
+                        X = -ContainerPosition.X;
+                    if (ContainerPosition.Y + Y + PopupSize.Height > ActualHeight)
+                        Y = ActualHeight - ContainerPosition.Y - PopupSize.Height;
+                }
+                catch (InvalidOperationException)
+                {
+                    X = 5;
+                    Y = TargetSize.Height - PopupSize.Height - 5;
+                }
+            }
+
+            return [new(new Point(X, Y), PopupPrimaryAxis.Horizontal)];
+        }
+
+        private void UpdatePopupPlacement(Popup _Popup)
+        {
+            if (_Popup.IsOpen)
+            {
+                Dispatcher.BeginInvoke(new Action(() =>
+                {
+                    double Offset = _Popup.HorizontalOffset;
+                    _Popup.HorizontalOffset = Offset + 0.01;
+                    _Popup.HorizontalOffset = Offset;
+                }), DispatcherPriority.Render);
+            }
+        }
+    }
+}

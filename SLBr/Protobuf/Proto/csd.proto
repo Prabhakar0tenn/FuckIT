@@ -1,0 +1,128 @@
+﻿// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Use of this source code is governed by a BSD-style license that can be
+// found in the LICENSE file.
+
+syntax = "proto2";
+
+option optimize_for = LITE_RUNTIME;
+
+package safe_browsing;
+
+message ClientDownloadRequest {
+  // The final URL of the download (after all redirects).
+  required string url = 1;
+
+  // This message contains various binary digests of the download payload.
+  message Digests {
+    optional bytes sha256 = 1;
+  }
+  required Digests digests = 2;
+
+  // This is the length in bytes of the download payload.
+  required int64 length = 3;
+
+  // Type of the resources stored below.
+  enum ResourceType {
+    // The final URL of the download payload.  The resource URL should
+    // correspond to the URL field above.
+    DOWNLOAD_URL = 0;
+  }
+
+  message Resource {
+    required string url = 1;
+    required ResourceType type = 2;
+    // This will only be set if the referrer is available and if the
+    // resource type is either TAB_URL or DOWNLOAD_URL.
+    optional string referrer = 4;
+  }
+
+  // This repeated field will store all the redirects as well as the
+  // final URLs for the top-level tab URL (i.e., the URL that
+  // triggered the download) as well as for the download URL itself.
+  repeated Resource resources = 4;
+
+  // True if the download was user initiated.
+  optional bool user_initiated = 6;
+
+  // Fields 7 and 8 are only used on the server.
+
+  // Name of the file where the download would be stored if the
+  // download completes.  E.g., "bla.exe".
+  optional string file_basename = 9;
+
+  // Starting with Chrome M19 we're also sending back pings for Chrome
+  // extensions that get downloaded by users.
+  enum DownloadType {
+    WIN_EXECUTABLE = 0;    // Currently all .exe, .cab and .msi files.
+    CHROME_EXTENSION = 1;  // .crx files.
+    ANDROID_APK = 2;       // .apk files.
+    // .zip files containing one of the other executable types.
+    ZIPPED_EXECUTABLE = 3;
+    MAC_EXECUTABLE = 4;  // .dmg, .pkg, etc.
+    ZIPPED_ARCHIVE = 5;  // .zip file containing another archive.
+    ARCHIVE = 6;         // Archive that doesn't have a specific DownloadType.
+    // A .zip that Chrome failed to unpack to the point of finding exe/zips.
+    INVALID_ZIP = 7;
+    // A .dmg, .pkg, etc, that Chrome failed to unpack to the point of finding
+    // Mach O's.
+    MAC_ARCHIVE_FAILED_PARSING = 8;
+    // A download request initiated via PPAPI. Typically the requestor is
+    // a Flash applet.
+    PPAPI_SAVE_REQUEST = 9;
+    // A file we don't support, but we've decided to sample and send
+    // a light-ping.
+    SAMPLED_UNSUPPORTED_FILE = 10;
+    // .rar file containing one of the other executable types.
+    RAR_COMPRESSED_EXECUTABLE = 11;
+    // .rar file containing another archive.
+    RAR_COMPRESSED_ARCHIVE = 12;
+    // .rar file that Chrome failed to unpack to the point of finding
+    // executables or archives.
+    INVALID_RAR = 13;
+    // Office Document or PDF.
+    DOCUMENT = 14;
+
+    // .7z archive
+    SEVEN_ZIP_COMPRESSED_EXECUTABLE = 15;
+    SEVEN_ZIP_COMPRESSED_ARCHIVE = 16;
+    INVALID_SEVEN_ZIP = 17;
+  }
+  optional DownloadType download_type = 10 [default = WIN_EXECUTABLE];
+
+  // Locale of the device, eg en, en_US.
+  optional string locale = 11;
+
+  // A binary or archive contained in an archive (e.g., a .exe in a .zip
+  // archive, or a .zip inside a .zip).
+  message ArchivedBinary {
+    optional string file_basename = 1;
+    optional DownloadType download_type = 2;
+    optional Digests digests = 3;
+    optional int64 length = 4;
+  }
+
+  repeated ArchivedBinary archived_binary = 22;
+
+  // True if the .zip or DMG, etc, was 100% successfully unpacked.
+  optional bool archive_valid = 26;
+}
+
+message ClientDownloadResponse {
+  enum Verdict {
+    // Download is considered safe.
+    SAFE = 0;
+    // Download is considered dangerous.  Chrome should show a warning to the
+    // user.
+    DANGEROUS = 1;
+    // Download is uncommon.  Chrome should display a less severe warning.
+    UNCOMMON = 2;
+    // The download is potentially unwanted.
+    POTENTIALLY_UNWANTED = 3;
+    // The download is from a dangerous host.
+    DANGEROUS_HOST = 4;
+    // The backend doesn't have confidence in its verdict of this file.
+    // Chrome should show the default warning if configured for this file type.
+    UNKNOWN = 5;
+  }
+  optional Verdict verdict = 1 [default = SAFE];
+}

@@ -1,0 +1,280 @@
+﻿/*Copyright © SLT Softwares. All rights reserved.
+Use of this source code is governed by a GNU license that can be found in the LICENSE file.*/
+
+using SLBr.WebView;
+using System.Runtime.InteropServices;
+using System.Windows;
+using System.Windows.Controls;
+using System.Windows.Controls.Primitives;
+using System.Windows.Interop;
+using System.Windows.Media;
+
+namespace SLBr.Controls
+{
+    /// <summary>
+    /// Interaction logic for PopupBrowser.xaml
+    /// </summary>
+    public partial class PopupBrowser : Window
+    {
+        public IWebView WebView;
+        private string InitialAddress;
+        nint Handle;
+        public PopupBrowser(string _Address, int _Width, int _Height)
+        {
+            InitializeComponent();
+            InitialAddress = _Address;
+            if (_Width != -1)
+                Width = _Width;
+            if (_Height != -1)
+                Height = _Height;
+            ApplyTheme(App.Instance.CurrentTheme);
+            int trueValue = 0x01;
+            Handle = new WindowInteropHelper(this).EnsureHandle();
+            DllUtils.DwmSetWindowAttribute(Handle, DwmWindowAttribute.DWMWA_MICA_EFFECT, ref trueValue, Marshal.SizeOf(typeof(int)));
+            CreateWebView();
+            StatusBubblePopup.CustomPopupPlacementCallback = new CustomPopupPlacementCallback(StatusBubblePopupPlacement);
+        }
+
+        async void CreateWebView()
+        {
+            WebViewBrowserSettings Settings = new()
+            {
+                JavaScriptMessage = false
+            };
+
+            WebView = await WebViewManager.Create((WebEngineType)App.Instance.GlobalSave.GetInt("WebEngine"), [new(true, InitialAddress)], Settings);
+            WebView.StatusMessage += WebView_StatusMessage;
+            WebView.LoadingStateChanged += WebView_LoadingStateChanged;
+            WebView.TitleChanged += WebView_TitleChanged;
+            WebView.IsBrowserInitializedChanged += WebView_IsBrowserInitializedChanged;
+            WebView.FaviconChanged += WebView_FaviconChanged;
+            WebView.ResourceRequested += WebView_ResourceRequested;
+            WebView.ContextMenuRequested += WebView_ContextMenuRequested;
+            /*_Browser.LifeSpanHandler = App.Instance._LifeSpanHandler;
+            _Browser.RequestHandler = App.Instance._RequestHandler;
+            _Browser.ResourceRequestHandlerFactory = new Handlers.ResourceRequestHandlerFactory(App.Instance._RequestHandler);
+            _Browser.DownloadHandler = App.Instance._DownloadHandler;
+            _Browser.MenuHandler = App.Instance._LimitedContextMenuHandler;
+            //_Browser.JsDialogHandler = MainWindow.Instance._JsDialogHandler;*/
+
+            WebView.Control.AllowDrop = true;
+            WebView.Control.IsManipulationEnabled = true;
+            WebView.Control.UseLayoutRounding = true;
+
+            WebContent.Visibility = Visibility.Collapsed;
+            WebContent.Children.Add(WebView.Control);
+        }
+
+        public void Share(string? Url = null) =>
+            Utils.Share(WebView, Url == null && Title.Length != 0 ? Title : "Shared link", Url ?? WebView.Address);
+
+        private void WebView_ContextMenuRequested(object? sender, WebContextMenuEventArgs e)
+        {
+            bool IsPageMenu = true;
+            ContextMenu BrowserMenu = new();
+            foreach (WebContextMenuType i in Enum.GetValues<WebContextMenuType>())
+            {
+                if (e.MenuType.HasFlag(i))
+                {
+                    if (BrowserMenu.Items.Count != 0 && BrowserMenu.Items[BrowserMenu.Items.Count - 1].GetType() == typeof(MenuItem))
+                        BrowserMenu.Items.Add(new Separator());
+                    if (i == WebContextMenuType.Link)
+                    {
+                        IsPageMenu = false;
+                        bool HasLinkText = !string.IsNullOrEmpty(e.LinkText?.Trim());
+                        BrowserMenu.Items.Add(new MenuItem { Icon = "\uE8A7", Header = "Open in new tab", Command = new RelayCommand(_ => App.Instance.CurrentFocusedWindow().NewTab(e.LinkUrl, true, App.Instance.CurrentFocusedWindow().TabsUI.SelectedIndex + 1, bool.Parse(App.Instance.GlobalSave.Get("PrivateTabs")))) });
+                        BrowserMenu.Items.Add(new MenuItem { Icon = "\ue71b", Header = "Copy link", Command = new RelayCommand(_ => App.Instance.CopyToClipboard(e.LinkUrl, 0)) });
+                        if (e.LinkUrl.StartsWith("mailto:"))
+                            BrowserMenu.Items.Add(new MenuItem { Icon = "\ue715", Header = "Copy email address", Command = new RelayCommand(_ => App.Instance.CopyToClipboard(e.LinkUrl[7..], 2)) });
+                        if (HasLinkText)
+                            BrowserMenu.Items.Add(new MenuItem { /*IsEnabled = HasLinkText, */Icon = "\ue8c8", Header = "Copy link text", Command = new RelayCommand(_ => App.Instance.CopyToClipboard(e.LinkText, 2)) });
+                        BrowserMenu.Items.Add(new MenuItem { Icon = "\ue72d", Header = "Share link", Command = new RelayCommand(_ => Share(e.LinkUrl)) });
+                        if (HasLinkText)
+                            BrowserMenu.Items.Add(new MenuItem { Icon = "\uF6Fa", Header = $"Search \"{e.LinkText.ReplaceLineEndings("").Trim().Cut(20, true)}\" in new tab", Command = new RelayCommand(_ => App.Instance.CurrentFocusedWindow().NewTab(Utils.FixUrl(string.Format(App.Instance.DefaultSearchProvider.SearchUrl, e.LinkText.ReplaceLineEndings("").Trim())), true, App.Instance.CurrentFocusedWindow().TabsUI.SelectedIndex + 1, bool.Parse(App.Instance.GlobalSave.Get("PrivateTabs")))) });
+                    }
+                    else if (i == WebContextMenuType.Selection && !e.IsEditable)
+                    {
+                        IsPageMenu = false;
+                        BrowserMenu.Items.Add(new MenuItem { Icon = "\uF6Fa", Header = $"Search \"{e.SelectionText.Cut(20, true)}\" in new tab", Command = new RelayCommand(_ => App.Instance.CurrentFocusedWindow().NewTab(Utils.FixUrl(string.Format(App.Instance.DefaultSearchProvider.SearchUrl, e.SelectionText)), true, App.Instance.CurrentFocusedWindow().TabsUI.SelectedIndex + 1, bool.Parse(App.Instance.GlobalSave.Get("PrivateTabs")))) });
+                        BrowserMenu.Items.Add(new MenuItem { InputGestureText = "Ctrl+C", Icon = "\ue8c8", Header = "Copy", Command = new RelayCommand(_ => App.Instance.CopyToClipboard(e.SelectionText, 2)) });
+                        BrowserMenu.Items.Add(new Separator());
+                        BrowserMenu.Items.Add(new MenuItem { InputGestureText = "Ctrl+A", Icon = "\ue8b3", Header = "Select all", Command = new RelayCommand(_ => WebView?.SelectAll()) });
+                    }
+                    else if (i == WebContextMenuType.Media)
+                    {
+                        IsPageMenu = false;
+                        if (e.MediaType == WebContextMenuMediaType.Image)
+                        {
+                            BrowserMenu.Items.Add(new MenuItem
+                            {
+                                Icon = "\xe8b9",
+                                Header = "Copy image",
+                                Command = new RelayCommand(_ => {
+                                    try { Utils.DownloadAndCopyImage(e.SourceUrl); }
+                                    catch { App.Instance.CopyToClipboard(e.SourceUrl, 1); }
+                                })
+                            });
+                            BrowserMenu.Items.Add(new MenuItem { Icon = "\ue71b", Header = "Copy image link", Command = new RelayCommand(_ => App.Instance.CopyToClipboard(e.SourceUrl, 0)) });
+                            BrowserMenu.Items.Add(new MenuItem { Icon = "\ue792", Header = "Save image as", Command = new RelayCommand(_ => WebView?.Download(e.SourceUrl)) });
+                            BrowserMenu.Items.Add(new MenuItem
+                            {
+                                Icon = "\uF6Fa",
+                                Header = "Search image",
+                                Command = new RelayCommand(_ => {
+
+                                    string Url = string.Empty;
+                                    switch (App.Instance.GlobalSave.GetInt("ImageSearch"))
+                                    {
+                                        case 0:
+                                            Url = $"https://lens.google.com/uploadbyurl?url={Uri.EscapeDataString(e.SourceUrl.AsSpan())}";
+                                            break;
+                                        case 1:
+                                            Url = $"https://www.bing.com/images/searchbyimage?cbir=sbi&imgurl={Uri.EscapeDataString(e.SourceUrl.AsSpan())}";
+                                            break;
+                                        case 2:
+                                            Url = $"https://yandex.com/images/search?rpt=imageview&url={Uri.EscapeDataString(e.SourceUrl.AsSpan())}";
+                                            break;
+                                        case 3:
+                                            Url = $"https://tineye.com/search?url={Uri.EscapeDataString(e.SourceUrl.AsSpan())}";
+                                            break;
+                                    }
+                                    App.Instance.CurrentFocusedWindow().NewTab(Url, true, App.Instance.CurrentFocusedWindow().TabsUI.SelectedIndex + 1, bool.Parse(App.Instance.GlobalSave.Get("PrivateTabs")));
+                                })
+                            });
+                        }
+                        else if (e.MediaType == WebContextMenuMediaType.Video)
+                        {
+                            BrowserMenu.Items.Add(new MenuItem { Icon = "\ue71b", Header = "Copy video link", Command = new RelayCommand(_ => App.Instance.CopyToClipboard(e.SourceUrl, 0)) });
+                            BrowserMenu.Items.Add(new MenuItem { Icon = "\ue792", Header = "Save video as", Command = new RelayCommand(_ => WebView?.Download(e.SourceUrl)) });
+                            BrowserMenu.Items.Add(new MenuItem { Icon = "\uee49", Header = "Picture in picture", Command = new RelayCommand(_ => WebView?.ExecuteScript("(async()=>{let playingVideo=Array.from(document.querySelectorAll('video')).find(v=>!v.paused&&!v.ended&&v.readyState>2);if (!playingVideo){playingVideo=document.querySelector('video');}if (playingVideo&&document.pictureInPictureEnabled){await playingVideo.requestPictureInPicture();}})();")) });
+                        }
+                    }
+                }
+            }
+            if (e.IsEditable)
+            {
+                BrowserMenu.Items.Add(new MenuItem { InputGestureText = "Win+Period", Icon = "\ue76e", Header = "Emoji", Command = new RelayCommand(_ => Utils.ShowEmojiPicker()) });
+                BrowserMenu.Items.Add(new Separator());
+                BrowserMenu.Items.Add(new MenuItem { InputGestureText = "Ctrl+Z", Icon = "\ue7a7", Header = "Undo", Command = new RelayCommand(_ => WebView?.Undo()) });
+                BrowserMenu.Items.Add(new MenuItem { InputGestureText = "Ctrl+Y", Icon = "\ue7a6", Header = "Redo", Command = new RelayCommand(_ => WebView?.Redo()) });
+                BrowserMenu.Items.Add(new Separator());
+                BrowserMenu.Items.Add(new MenuItem { InputGestureText = "Ctrl+X", Icon = "\ue8c6", Header = "Cut", Command = new RelayCommand(_ => WebView?.Cut()) });
+                BrowserMenu.Items.Add(new MenuItem { InputGestureText = "Ctrl+C", Icon = "\ue8c8", Header = "Copy", Command = new RelayCommand(_ => WebView?.Copy()) });
+                BrowserMenu.Items.Add(new MenuItem { InputGestureText = "Ctrl+V", Icon = "\ue77f", Header = "Paste", Command = new RelayCommand(_ => WebView?.Paste()) });
+                BrowserMenu.Items.Add(new MenuItem { Icon = "\ue74d", Header = "Delete", Command = new RelayCommand(_ => WebView?.Delete()) });
+                BrowserMenu.Items.Add(new Separator());
+                BrowserMenu.Items.Add(new MenuItem { InputGestureText = "Ctrl+A", Icon = "\ue8b3", Header = "Select all", Command = new RelayCommand(_ => WebView?.SelectAll()) });
+                if (!string.IsNullOrEmpty(e.SelectionText))
+                {
+                    BrowserMenu.Items.Add(new Separator());
+                    BrowserMenu.Items.Add(new MenuItem { Icon = "\uF6Fa", Header = $"Search \"{e.SelectionText.Cut(20, true)}\" in new tab", Command = new RelayCommand(_ => App.Instance.CurrentFocusedWindow().NewTab(Utils.FixUrl(string.Format(App.Instance.DefaultSearchProvider.SearchUrl, e.SelectionText)), true, App.Instance.CurrentFocusedWindow().TabsUI.SelectedIndex + 1, bool.Parse(App.Instance.GlobalSave.Get("PrivateTabs")))) });
+                }
+            }
+            else if (IsPageMenu && e.MediaType == WebContextMenuMediaType.None)
+            {
+                StackPanel TopMenuStack = new() { Orientation = Orientation.Horizontal };
+                TopMenuStack.Children.Add(new MenuItem { IsEnabled = WebView.CanGoBack, Icon = "\uE76B", ToolTip = "Back", Command = new RelayCommand(_ => WebView?.Back()), Template = (ControlTemplate)FindResource("IconMenuItemTemplate") });
+
+                TopMenuStack.Children.Add(new MenuItem { IsEnabled = WebView.CanGoForward, Icon = "\uE76C", ToolTip = "Forward", Command = new RelayCommand(_ => WebView?.Forward()), Template = (ControlTemplate)FindResource("IconMenuItemTemplate") });
+                TopMenuStack.Children.Add(new MenuItem { Icon = "\uE72C", ToolTip = "Refresh", Command = new RelayCommand(_ => WebView?.Refresh()), Template = (ControlTemplate)FindResource("IconMenuItemTemplate") });
+                
+                BrowserMenu.Items.Add(new MenuItem { Template = (ControlTemplate)FindResource("EmptyMenuItemTemplate"), Focusable = false, Header = TopMenuStack });
+
+                BrowserMenu.Items.Add(new Separator());
+                BrowserMenu.Items.Add(new MenuItem { Icon = "\ue792", Header = "Save as", Command = new RelayCommand(_ => WebView?.Download(WebView.Address)) });
+                BrowserMenu.Items.Add(new MenuItem { Icon = "\uE749", Header = "Print", Command = new RelayCommand(_ => WebView?.Print()) });
+                BrowserMenu.Items.Add(new MenuItem { InputGestureText = "Ctrl+A", Icon = "\ue8b3", Header = "Select all", Command = new RelayCommand(_ => WebView?.SelectAll()) });
+                BrowserMenu.Items.Add(new Separator());
+
+                MenuItem ToolsSubMenuModel = new() { Icon = "\ue821", Header = "More tools" };
+                ToolsSubMenuModel.Items.Add(new MenuItem { Icon = "\ue72d", Header = "Share", Command = new RelayCommand(_ => Share()) });
+                BrowserMenu.Items.Add(ToolsSubMenuModel);
+
+                MenuItem AdvancedSubMenuModel = new() { Icon = "\uec7a", Header = "Advanced" };
+                AdvancedSubMenuModel.Items.Add(new MenuItem { IsEnabled = Utils.IsHttpScheme(e.FrameUrl), Icon = "\ue943", Header = "View source", Command = new RelayCommand(_ => App.Instance.CurrentFocusedWindow().NewTab($"view-source:{e.FrameUrl}", true, App.Instance.CurrentFocusedWindow().TabsUI.SelectedIndex + 1, bool.Parse(App.Instance.GlobalSave.Get("PrivateTabs")))) });
+                BrowserMenu.Items.Add(AdvancedSubMenuModel);
+            }
+            BrowserMenu.PlacementTarget = WebView?.Control;
+            BrowserMenu.IsOpen = true;
+        }
+
+        private void WebView_ResourceRequested(object? sender, ResourceRequestEventArgs e)
+        {
+            if (!App.Instance.ExternalFonts && e.ResourceRequestType == ResourceRequestType.Font)
+            {
+                e.Cancel = true;
+                return;
+            }
+        }
+
+        private void WebView_FaviconChanged(object? sender, string e)
+        {
+            Icon = App.Instance.GetIcon(e).Item1;
+        }
+
+        private void WebView_IsBrowserInitializedChanged(object? sender, EventArgs e)
+        {
+            if (WebView.IsBrowserInitialized)
+                WebContent.Visibility = Visibility.Visible;
+        }
+
+        private void WebView_TitleChanged(object? sender, string e)
+        {
+            Title = e +  " - SLBr";
+        }
+
+        private async void WebView_LoadingStateChanged(object? sender, LoadingStateResult e)
+        {
+            await WebView.CallDevToolsAsync("Emulation.setAutoDarkModeOverride", new
+            {
+                enabled = App.Instance.CurrentTheme.DarkWebPage
+            });
+        }
+
+        private void WebView_StatusMessage(object? sender, string e)
+        {
+            if (!string.IsNullOrEmpty(e))
+                StatusMessage.Text = e;
+            StatusBubblePopup.IsOpen = !string.IsNullOrEmpty(e);
+        }
+
+        public void ApplyTheme(Theme _Theme)
+        {
+            int DarkModeValue = _Theme.DarkTitleBar ? 0x01 : 0x00;
+            DllUtils.DwmSetWindowAttribute(Handle, DwmWindowAttribute.DWMWA_USE_IMMERSIVE_DARK_MODE, ref DarkModeValue, Marshal.SizeOf(typeof(int)));
+
+            Resources["PrimaryBrushColor"] = _Theme.PrimaryColor;
+            Resources["SecondaryBrushColor"] = _Theme.SecondaryColor;
+            Resources["BorderBrushColor"] = _Theme.BorderColor;
+            Resources["GrayBrushColor"] = _Theme.GrayColor;
+            Resources["FontBrushColor"] = _Theme.FontColor;
+            Resources["IndicatorBrushColor"] = _Theme.IndicatorColor;
+        }
+
+        private CustomPopupPlacement[] StatusBubblePopupPlacement(Size PopupSize, Size TargetSize, Point Offset)
+        {
+            double X = 5;
+            double Y = TargetSize.Height - PopupSize.Height - 5;
+
+            if (WebContent.IsLoaded && VisualTreeHelper.GetParent(WebContent) != null)
+            {
+                try
+                {
+                    Point ContainerPosition = WebContent.TransformToAncestor(this).Transform(new Point(0, 0));
+
+                    if (ContainerPosition.X + X < 0)
+                        X = -ContainerPosition.X;
+                    if (ContainerPosition.Y + Y + PopupSize.Height > ActualHeight)
+                        Y = ActualHeight - ContainerPosition.Y - PopupSize.Height;
+                }
+                catch (InvalidOperationException)
+                {
+                    X = 5;
+                    Y = TargetSize.Height - PopupSize.Height - 5;
+                }
+            }
+
+            return [new(new Point(X, Y), PopupPrimaryAxis.Horizontal)];
+        }
+    }
+}

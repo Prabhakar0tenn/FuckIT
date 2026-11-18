@@ -1,0 +1,37 @@
+﻿/*Copyright © SLT Softwares. All rights reserved.
+Use of this source code is governed by a GNU license that can be found in the LICENSE file.*/
+
+using Microsoft.Win32;
+using System.Diagnostics;
+
+namespace SLBr
+{
+    public static class StartupManager
+    {
+        private const string RegistryRunPath = @"Software\Microsoft\Windows\CurrentVersion\Run";
+
+        //TODO: Remove registry entry on profile deletion.
+
+        public static void EnableStartup(string ProfileName)
+        {
+            string KeyName = $"SLBr-{ProfileName}";
+            string Arguments = $"--background --user={ProfileName}";
+            using RegistryKey Key = Registry.CurrentUser.OpenSubKey(RegistryRunPath, true);
+            Key.SetValue(KeyName, $"\"{Process.GetCurrentProcess().MainModule.FileName}\" {Arguments}");
+        }
+
+        public static void DisableStartup(string ProfileName)
+        {
+            string KeyName = $"SLBr-{ProfileName}";
+            using RegistryKey Key = Registry.CurrentUser.OpenSubKey(RegistryRunPath, true);
+            Key.DeleteValue(KeyName, false);
+        }
+
+        /*public static bool IsStartupEnabled()
+        {
+            string KeyName = App.Instance.Username == "Default" ? "SLBr" : $"SLBr-{App.Instance.Username}";
+            using RegistryKey Key = Registry.CurrentUser.OpenSubKey(RegistryRunPath, false);
+            return Key?.GetValue(KeyName) != null;
+        }*/
+    }
+}

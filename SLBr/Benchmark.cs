@@ -1,0 +1,83 @@
+﻿/*Copyright © SLT Softwares. All rights reserved.
+Use of this source code is governed by a GNU license that can be found in the LICENSE file.*/
+
+using System.Diagnostics;
+using System.Text;
+
+namespace SLBr
+{
+    public class Benchmark
+    {
+        public class Result
+        {
+            public string Name;
+            public long Time;
+            public long Memory;
+
+            public override string ToString() =>
+                $"Time:\t{Time:D}\tms | Memory:\t{Memory:D} bytes | {Name}";
+        }
+
+        private static readonly List<Result> Results = [];
+
+        public static void Clear() => Results.Clear();
+
+        private static void ForceGC()
+        {
+            GC.Collect(GC.MaxGeneration, GCCollectionMode.Forced);
+            GC.WaitForPendingFinalizers();
+            GC.Collect(GC.MaxGeneration, GCCollectionMode.Forced);
+        }
+
+        public static void Run(string Name, int Iterations, Action Function)
+        {
+            ForceGC();
+
+            long MemoryBefore = GC.GetTotalMemory(true);
+            Stopwatch _Stopwatch = Stopwatch.StartNew();
+
+            for (int i = 0; i < Iterations; i++)
+                Function();
+
+            _Stopwatch.Stop();
+            long MemoryAfter = GC.GetTotalMemory(false);
+
+            Results.Add(new Result
+            {
+                Name = Name,
+                Time = _Stopwatch.ElapsedMilliseconds,
+                Memory = MemoryAfter - MemoryBefore
+            });
+        }
+
+        public static async Task RunAsync(string Name, int Iterations, Func<Task> Function)
+        {
+            ForceGC();
+
+            long MemoryBefore = GC.GetTotalMemory(true);
+            Stopwatch _Stopwatch = Stopwatch.StartNew();
+
+            for (int i = 0; i < Iterations; i++)
+                await Function();
+
+            _Stopwatch.Stop();
+            long MemoryAfter = GC.GetTotalMemory(false);
+
+            Results.Add(new Result
+            {
+                Name = Name,
+                Time = _Stopwatch.ElapsedMilliseconds,
+                Memory = MemoryAfter - MemoryBefore
+            });
+        }
+
+        public static string Report()
+        {
+            StringBuilder _String = new();
+            _String.AppendLine("Results");
+            foreach (Result _Result in Results)
+                _String.AppendLine(_Result.ToString());
+            return _String.ToString();
+        }
+    }
+}

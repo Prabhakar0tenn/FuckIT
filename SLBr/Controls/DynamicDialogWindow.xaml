@@ -1,0 +1,176 @@
+﻿<Window x:Class="SLBr.Controls.DynamicDialogWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+        xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+        xmlns:local="clr-namespace:SLBr.Controls"
+        mc:Ignorable="d"
+        Title="Prompt" SizeToContent="WidthAndHeight" WindowStartupLocation="CenterScreen"
+        ContentRendered="Window_ContentRendered" WindowStyle="None" ResizeMode="NoResize" AllowsTransparency="True" Background="Transparent" MinWidth="400" MaxWidth="600">
+    <Window.Resources>
+        <ResourceDictionary Source="../WinUIStyleDictionary.xaml"/>
+    </Window.Resources>
+    <Border>
+        <Border.Effect>
+            <DropShadowEffect Direction="-75" ShadowDepth="1" Opacity="0.5" BlurRadius="15" Color="Gray"/>
+        </Border.Effect>
+        <Border Background="{StaticResource PrimaryBrush}" BorderBrush="{StaticResource BorderBrush}" BorderThickness="1" CornerRadius="5" Margin="10">
+            <Grid Margin="10">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="*"/>
+                </Grid.RowDefinitions>
+
+                <DockPanel Margin="0,0,0,10" Grid.Row="0" Height="Auto">
+                    <TextBlock x:Name="TitleIcon" FontSize="18" TextOptions.TextFormattingMode="Ideal" FontFamily="{StaticResource IconFontFamily}" Margin="0,0,5,0"></TextBlock>
+                    <Label Margin="0,0,0,0" Padding="0" FontWeight="Medium" FontSize="14">
+                        <TextBlock Name="TitleText" TextTrimming="CharacterEllipsis"></TextBlock>
+                    </Label>
+                </DockPanel>
+                <StackPanel x:Name="InputStack" Grid.Row="1">
+                    <ItemsControl x:Name="InputsList" ItemsSource="{Binding InputFields}">
+                        <ItemsControl.Resources>
+                            <DataTemplate x:Key="TextTemplate">
+                                <StackPanel Margin="0,0,0,10">
+                                    <Grid Margin="0,0,0,5">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="Auto"/>
+                                            <ColumnDefinition Width="Auto"/>
+                                        </Grid.ColumnDefinitions>
+                                        <TextBlock TextTrimming="CharacterEllipsis" Text="{Binding Name}" Margin="0,0,5,0"/>
+                                        <Ellipse ToolTip="Required" Grid.Column="1" Fill="Red" VerticalAlignment="Center" Height="5" Width="5" Visibility="{Binding IsRequired, Converter={StaticResource BooleanToVisibility}}"/>
+                                    </Grid>
+                                    <TextBox Text="{Binding Value, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" KeyUp="ValidateInputs" Width="Auto"/>
+                                </StackPanel>
+                            </DataTemplate>
+                            <DataTemplate x:Key="LabelTemplate">
+                                <TextBlock Text="{Binding Name}" Margin="0,0,0,10" TextTrimming="CharacterEllipsis"/>
+                            </DataTemplate>
+                            <DataTemplate x:Key="BoolTemplate">
+                                <Grid Margin="0,0,0,10">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="Auto"/>
+                                        <ColumnDefinition Width="Auto"/>
+                                    </Grid.ColumnDefinitions>
+                                    <CheckBox Content="{Binding Name}" IsChecked="{Binding BoolValue, UpdateSourceTrigger=PropertyChanged}" Margin="0,0,5,0" Width="Auto"/>
+                                    <Ellipse ToolTip="Required" Grid.Column="1" Fill="Red" VerticalAlignment="Center" Height="5" Width="5" Visibility="{Binding IsRequired, Converter={StaticResource BooleanToVisibility}}"/>
+                                </Grid>
+                            </DataTemplate>
+                            <DataTemplate x:Key="ColorTemplate">
+                                <StackPanel Margin="0,0,0,10">
+                                    <Grid Margin="0,0,0,5">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="Auto"/>
+                                            <ColumnDefinition Width="Auto"/>
+                                        </Grid.ColumnDefinitions>
+                                        <TextBlock TextTrimming="CharacterEllipsis" Text="{Binding Name}" Margin="0,0,5,0"/>
+                                        <Ellipse ToolTip="Required" Grid.Column="1" Fill="Red" VerticalAlignment="Center" Height="5" Width="5" Visibility="{Binding IsRequired, Converter={StaticResource BooleanToVisibility}}"/>
+                                    </Grid>
+                                    <ListBox SelectionChanged="ColorList_SelectionChanged" SelectionMode="Single" VirtualizingPanel.VirtualizationMode="Recycling" ScrollViewer.HorizontalScrollBarVisibility="Disabled" ScrollViewer.VerticalScrollBarVisibility="Disabled" ScrollViewer.CanContentScroll="False" BorderThickness="0" Background="Transparent">
+                                        <ListBox.ItemsPanel>
+                                            <ItemsPanelTemplate>
+                                                <StackPanel Orientation="Horizontal"/>
+                                            </ItemsPanelTemplate>
+                                        </ListBox.ItemsPanel>
+                                        <ListBox.Resources>
+                                            <Style TargetType="{x:Type ListBoxItem}">
+                                                <Setter Property="BorderThickness" Value="0"/>
+                                                <Setter Property="Margin" Value="0,0,10,0"/>
+                                                <Setter Property="Template">
+                                                    <Setter.Value>
+                                                        <ControlTemplate TargetType="{x:Type ListBoxItem}">
+                                                            <Grid Width="30" Height="30">
+                                                                <Border Name="ItemBorder" CornerRadius="1000" BorderThickness="{TemplateBinding BorderThickness}" BorderBrush="{TemplateBinding BorderBrush}" Background="{TemplateBinding Background}"/>
+                                                                <Border Opacity="0" x:Name="Border" BorderThickness="2" BorderBrush="{StaticResource IndicatorBrush}" CornerRadius="1000"/>
+                                                                <TextBlock Foreground="{TemplateBinding Foreground}" HorizontalAlignment="Center" TextAlignment="Center" VerticalAlignment="Center" FontSize="16" TextOptions.TextFormattingMode="Ideal" FontFamily="{StaticResource IconFontFamily}" Text="{TemplateBinding Content}"/>
+                                                            </Grid>
+                                                            <ControlTemplate.Triggers>
+                                                                <Trigger Property="IsSelected" Value="True">
+                                                                    <Setter Property="BorderThickness" Value="0"/>
+                                                                    <Trigger.EnterActions>
+                                                                        <BeginStoryboard>
+                                                                            <Storyboard>
+                                                                                <DoubleAnimation Storyboard.TargetName="Border" Duration="0:0:0.250" To="1.0" Storyboard.TargetProperty="Opacity"/>
+                                                                            </Storyboard>
+                                                                        </BeginStoryboard>
+                                                                    </Trigger.EnterActions>
+                                                                    <Trigger.ExitActions>
+                                                                        <BeginStoryboard>
+                                                                            <Storyboard>
+                                                                                <DoubleAnimation Storyboard.TargetName="Border" Duration="0:0:0.250" To="0.0" Storyboard.TargetProperty="Opacity"/>
+                                                                            </Storyboard>
+                                                                        </BeginStoryboard>
+                                                                    </Trigger.ExitActions>
+                                                                </Trigger>
+                                                            </ControlTemplate.Triggers>
+                                                        </ControlTemplate>
+                                                    </Setter.Value>
+                                                </Setter>
+                                            </Style>
+                                        </ListBox.Resources>
+                                        <ListBoxItem Background="White" ToolTip="White"/>
+                                        <ListBoxItem Background="Red" ToolTip="Red"/>
+                                        <ListBoxItem Background="Orange" ToolTip="Orange"/>
+                                        <ListBoxItem Background="Gold" ToolTip="Yellow"/>
+                                        <ListBoxItem Background="MediumSeaGreen" ToolTip="Green"/>
+                                        <ListBoxItem Background="Cyan" ToolTip="Cyan"/>
+                                        <ListBoxItem Background="RoyalBlue" ToolTip="Blue"/>
+                                        <ListBoxItem Background="HotPink" ToolTip="Pink"/>
+                                        <ListBoxItem Background="MediumPurple" ToolTip="Purple"/>
+                                        <ListBoxItem Background="Transparent" ToolTip="Custom" BorderThickness="1" BorderBrush="{StaticResource BorderBrush}" Content="&#xef3c;" Margin="0" Foreground="{StaticResource SecondaryBrush}"/>
+                                    </ListBox>
+                                </StackPanel>
+                            </DataTemplate>
+                            <DataTemplate x:Key="DropdownTemplate">
+                                <StackPanel Margin="0,0,0,10">
+                                    <Grid Margin="0,0,0,5">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="Auto"/>
+                                            <ColumnDefinition Width="Auto"/>
+                                        </Grid.ColumnDefinitions>
+                                        <TextBlock TextTrimming="CharacterEllipsis" Text="{Binding Name}" Margin="0,0,5,0"/>
+                                        <Ellipse ToolTip="Required" Grid.Column="1" Fill="Red" VerticalAlignment="Center" Height="5" Width="5" Visibility="{Binding IsRequired, Converter={StaticResource BooleanToVisibility}}"/>
+                                    </Grid>
+                                    <ComboBox ItemsSource="{Binding Options}" SelectedItem="{Binding Value, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" SelectionChanged="ComboBox_SelectionChanged" Width="Auto"/>
+                                </StackPanel>
+                            </DataTemplate>
+                            <DataTemplate x:Key="TreeTemplate">
+                                <StackPanel Margin="0,0,0,10">
+                                    <Grid Margin="0,0,0,5">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="Auto"/>
+                                            <ColumnDefinition Width="Auto"/>
+                                        </Grid.ColumnDefinitions>
+                                        <TextBlock TextTrimming="CharacterEllipsis" Text="{Binding Name}" Margin="0,0,5,0"/>
+                                        <Ellipse ToolTip="Required" Grid.Column="1" Fill="Red" VerticalAlignment="Center" Height="5" Width="5" Visibility="{Binding IsRequired, Converter={StaticResource BooleanToVisibility}}"/>
+                                    </Grid>
+                                    <TreeView ItemsSource="{Binding Children}" SelectedItemChanged="TreeView_SelectedItemChanged">
+                                        <TreeView.ItemContainerStyle>
+                                            <Style TargetType="{x:Type TreeViewItem}" BasedOn="{StaticResource {x:Type TreeViewItem}}">
+                                                <Setter Property="local:ControlExtensions.Icon" Value="{Binding Icon}"/>
+                                            </Style>
+                                        </TreeView.ItemContainerStyle>
+                                        <TreeView.ItemTemplate>
+                                            <HierarchicalDataTemplate ItemsSource="{Binding Children}">
+                                                <TextBlock Text="{Binding Text}" VerticalAlignment="Center"/>
+                                            </HierarchicalDataTemplate>
+                                        </TreeView.ItemTemplate>
+                                    </TreeView>
+                                </StackPanel>
+                            </DataTemplate>
+                        </ItemsControl.Resources>
+                        <ItemsControl.ItemTemplateSelector>
+                            <local:InputFieldTemplateSelector TextTemplate="{StaticResource TextTemplate}" LabelTemplate="{StaticResource LabelTemplate}" BoolTemplate="{StaticResource BoolTemplate}" ColorTemplate="{StaticResource ColorTemplate}" DropdownTemplate="{StaticResource DropdownTemplate}" TreeTemplate="{StaticResource TreeTemplate}"/>
+                        </ItemsControl.ItemTemplateSelector>
+                    </ItemsControl>
+                </StackPanel>
+                <WrapPanel Grid.Row="3" HorizontalAlignment="Right" VerticalAlignment="Bottom">
+                    <Button BorderBrush="{StaticResource BorderBrush}" IsDefault="True" x:Name="PositiveButton" Click="PositiveButton_Click" MinWidth="60">OK</Button>
+                    <Button BorderBrush="{StaticResource BorderBrush}" IsCancel="True" x:Name="NegativeButton" MinWidth="60" Margin="10,0,0,0">Cancel</Button>
+                </WrapPanel>
+            </Grid>
+        </Border>
+    </Border>
+</Window>

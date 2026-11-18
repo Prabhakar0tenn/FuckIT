@@ -1,0 +1,4272 @@
+﻿/*Copyright © SLT Softwares. All rights reserved.
+Use of this source code is governed by a GNU license that can be found in the LICENSE file.*/
+
+using CefSharp;
+using CefSharp.DevTools;
+using CefSharp.Enums;
+using CefSharp.Handler;
+using CefSharp.Wpf.HwndHost;
+using Microsoft.Web.WebView2.Core;
+using Microsoft.Web.WebView2.Wpf;
+using Microsoft.Win32;
+using SLBr;
+using SLBr.Handlers;
+using System.Diagnostics;
+using System.IO;
+using System.Net.Sockets;
+using System.Reflection;
+using System.Runtime.InteropServices;
+using System.Security.Cryptography.X509Certificates;
+using System.Text;
+using System.Text.Json;
+using System.Text.Json.Serialization;
+using System.Windows;
+using System.Windows.Controls;
+using System.Windows.Interop;
+using System.Windows.Media.Imaging;
+using System.Windows.Navigation;
+using static SLBr.WebView.ChromiumPermissionHandler;
+
+namespace SLBr.WebView
+{
+    public enum WebEngineType { Chromium, ChromiumEdge, Trident }
+
+    public enum WebScreenshotFormat
+    {
+        JPEG,
+        PNG,
+        WebP
+    }
+
+    public enum WebDownloadState
+    {
+        InProgress,
+        Paused,
+        Completed,
+        Canceled,
+        Interrupted
+    }
+
+    public enum WebContextMenuMediaType
+    {
+        None = 0,
+        Image = 1,
+        Video = 2,
+        Audio = 3,
+        Canvas = 4,
+        File = 5,
+        Plugin = 6
+    }
+
+    [Flags]
+    public enum WebContextMenuType
+    {
+        //None = 0,
+        Page = 1,
+        Link = 2,
+        Media = 4,
+        Selection = 8,
+        Editable = 16
+    }
+
+    /*public enum WebViewBrowsingDataTypes
+    {
+        IndexedDb,
+        LocalStorage,
+        WebSQL,
+        AllDomStorage,
+        Cookies,
+        Cache,
+        DiskCache
+    }*/
+
+    //https://chromium.googlesource.com/chromium/src/+/HEAD/net/base/net_error_list.h
+    public enum WebErrorCode
+    {
+        BlobReferencedFileUnavailable = -906,
+        BlobReferencedBlobBroken = -905,
+        BlobDereferencedWhileBuilding = -904,
+        BlobSourceDiedInTransit = -903,
+        BlobFileWriteFailed = -902,
+        BlobOutOfMemory = -901,
+        BlobInvalidConstructionArguments = -900,
+        DnsCacheInvalidationInProgress = -815,
+        DnsSecureProbeRecordInvalid = -814,
+        DnsNoMatchingSupportedAlpn = -811,
+        DnsRequestCancelled = -810,
+        DnsNameHttpsOnly = -809,
+        DnsSecureResolverHostnameResolutionFailed = -808,
+        DnsSortError = -806,
+        DnsSearchEmpty = -805,
+        DnsCacheMiss = -804,
+        DnsTimedOut = -803,
+        DnsServerFailed = -802,
+        DnsServerRequiresTcp = -801,
+        DnsMalformedResponse = -800,
+        CertVerifierChanged = -716,
+        CertDatabaseChanged = -714,
+        SelfSignedCertGenerationFailed = -713,
+        PrivateKeyExportFailed = -712,
+        KeyGenerationFailed = -710,
+        Pkcs12ImportUnsupported = -709,
+        Pkcs12ImportInvalidFile = -708,
+        Pkcs12ImportInvalidMac = -707,
+        ImportServerCertFailed = -706,
+        ImportCaCertFailed = -705,
+        ImportCertAlreadyExists = -704,
+        ImportCaCertNotCa = -703,
+        Pkcs12ImportFailed = -702,
+        Pkcs12ImportBadPassword = -701,
+        TrustTokenOperationSuccessWithoutSendingRequest = -507,
+        TrustTokenOperationFailed = -506,
+        InvalidWebBundle = -505,
+        InvalidSignedExchange = -504,
+        AddUserCertFailed = -503,
+        NoPrivateKeyForCert = -502,
+        InsecureResponse = -501,
+        CacheOpenOrCreateFailure = -413,
+        CacheDoomFailure = -412,
+        CacheEntryNotSuitable = -411,
+        CacheAuthFailureAfterRead = -410,
+        CacheLockTimeout = -409,
+        CacheChecksumMismatch = -408,
+        CacheChecksumReadFailure = -407,
+        CacheRace = -406,
+        CacheCreateFailure = -405,
+        CacheOpenFailure = -404,
+        CacheOperationNotSupported = -403,
+        CacheWriteFailure = -402,
+        CacheReadFailure = -401,
+        CacheMiss = -400,
+        UnexpectedContentDictionaryHeader = -388,
+        DictionaryLoadFailed = -387,
+        ZstdWindowSizeTooBig = -386,
+        BlockedByLocalNetworkAccessChecks = -385,
+        CachedIpAddressSpaceBlockedByLocalNetworkAccessPolicy = -384,
+        InconsistentIpAddressSpace = -383,
+        TooManyAcceptChRestarts = -382,
+        QuicGoawayRequestCanBeRetried = -381,
+        QuicCertRootNotKnown = -380,
+        HttpResponseCodeFailure = -379,
+        Http2StreamClosed = -376,
+        TooManyRetries = -375,
+        Http2RstStreamNoErrorReceived = -372,
+        ContentDecodingInitFailed = -371,
+        InvalidHttpResponse = -370,
+        ProxyRequired = -368,
+        PacScriptTerminated = -367,
+        ProxyHttp11Required = -366,
+        Http11Required = -365,
+        ProxyAuthRequestedWithNoConnection = -364,
+        Http2CompressionError = -363,
+        Http2FrameSizeError = -362,
+        Http2FlowControlError = -361,
+        Http2InadequateTransportSecurity = -360,
+        QuicHandshakeFailed = -358,
+        ResponseHeadersTruncated = -357,
+        QuicProtocolError = -356,
+        IncompleteChunkedEncoding = -355,
+        ContentLengthMismatch = -354,
+        Http2PingFailed = -352,
+        Http2ServerRefusedStream = -351,
+        ResponseHeadersMultipleLocation = -350,
+        ResponseHeadersMultipleContentDisposition = -349,
+        PacNotInDhcp = -348,
+        IncompleteHttp2Headers = -347,
+        ResponseHeadersMultipleContentLength = -346,
+        ResponseBodyTooBigToDrain = -345,
+        UndocumentedSecurityLibraryStatus = -344,
+        MisconfiguredAuthEnvironment = -343,
+        UnexpectedSecurityLibraryStatus = -342,
+        MissingAuthCredentials = -341,
+        EncodingDetectionFailed = -340,
+        UnsupportedAuthScheme = -339,
+        InvalidAuthCredentials = -338,
+        Http2ProtocolError = -337,
+        NoSupportedProxies = -336,
+        UnrecognizedFtpDirectoryListingFormat = -334,
+        EncodingConversionFailed = -333,
+        SynReplyNotReceived = -332,
+        NetworkIoSuspended = -331,
+        ContentDecodingFailed = -330,
+        MalformedIdentity = -329,
+        RequestRangeNotSatisfiable = -328,
+        PacScriptFailed = -327,
+        ResponseHeadersTooBig = -325,
+        EmptyResponse = -324,
+        UnexpectedProxyAuth = -323,
+        MethodNotSupported = -322,
+        InvalidChunkedEncoding = -321,
+        InvalidResponse = -320,
+        UnsafePort = -312,
+        UnsafeRedirect = -311,
+        TooManyRedirects = -310,
+        InvalidRedirect = -303,
+        UnknownUrlScheme = -302,
+        DisallowedUrlScheme = -301,
+        InvalidUrl = -300,
+        CertEnd = -220,
+        CertSelfSignedLocalNetwork = -219,
+        CertKnownInterceptionBlocked = -217,
+        CertificateTransparencyRequired = -214,
+        CertValidityTooLong = -213,
+        CertNameConstraintViolation = -212,
+        CertWeakKey = -211,
+        CertNonUniqueName = -210,
+        CertWeakSignatureAlgorithm = -208,
+        CertInvalid = -207,
+        CertRevoked = -206,
+        CertUnableToCheckRevocation = -205,
+        CertNoRevocationMechanism = -204,
+        CertContainsErrors = -203,
+        CertAuthorityInvalid = -202,
+        CertDateInvalid = -201,
+        CertCommonNameInvalid = -200,
+        ProxyDelegateCanceledConnectResponse = -188,
+        ProxyDelegateCanceledConnectRequest = -187,
+        ProxyUnableToConnectToDestination = -186,
+        EchFallbackCertificateInvalid = -184,
+        EchNotNegotiated = -183,
+        InvalidEchConfigList = -182,
+        SslKeyUsageIncompatible = -181,
+        Tls13DowngradeDetected = -180,
+        WrongVersionOnEarlyData = -179,
+        EarlyDataRejected = -178,
+        SslClientAuthNoCommonAlgorithms = -177,
+        NoBufferSpace = -176,
+        ReadIfReadyNotImplemented = -174,
+        WsUpgrade = -173,
+        SslObsoleteCipher = -172,
+        CtConsistencyProofParsingFailed = -171,
+        UnableToReuseConnectionForProxyAuth = -170,
+        CtSthIncomplete = -169,
+        CtSthParsingFailed = -168,
+        SslServerCertBadFormat = -167,
+        ICANNNameCollision = -166,
+        SslClientAuthCertBadFormat = -164,
+        SocketSendBufferSizeUnchangeable = -163,
+        SocketReceiveBufferSizeUnchangeable = -162,
+        SocketSetSendBufferSizeError = -161,
+        SocketSetReceiveBufferSizeError = -160,
+        SslUnrecognizedNameAlert = -159,
+        SslServerCertChanged = -156,
+        WsThrottleQueueTooLarge = -154,
+        SslDecryptErrorAlert = -153,
+        ClientAuthCertTypeUnsupported = -151,
+        SslPinnedKeyNotInCertChain = -150,
+        SslBadPeerPublicKey = -149,
+        SslHandshakeNotCompleted = -148,
+        AddressInUse = -147,
+        WsProtocolError = -145,
+        MsgTooBig = -142,
+        SslClientAuthSignatureFailed = -141,
+        HttpsProxyTunnelResponseRedirect = -140,
+        TemporarilyThrottled = -139,
+        NetworkAccessDenied = -138,
+        NameResolutionFailed = -137,
+        ProxyCertificateInvalid = -136,
+        SslClientAuthCertNoPrivateKey = -135,
+        SslClientAuthPrivateKeyAccessDenied = -134,
+        PreconnectMaxSocketLimit = -133,
+        MandatoryProxyConfigurationFailed = -131,
+        ProxyConnectionFailed = -130,
+        ProxyAuthRequested = -127,
+        SslBadRecordMacAlert = -126,
+        SslDecompressionFailureAlert = -125,
+        WinsockUnexpectedWrittenBytes = -124,
+        SslNoRenegotiation = -123,
+        AlpnNegotiationFailed = -122,
+        SocksConnectionHostUnreachable = -121,
+        SocksConnectionFailed = -120,
+        HostResolverQueueTooLarge = -119,
+        ConnectionTimedOut = -118,
+        BadSslClientAuthCert = -117,
+        ProxyAuthUnsupported = -115,
+        SslRenegotiationRequested = -114,
+        SslVersionOrCipherMismatch = -113,
+        NoSslVersionsEnabled = -112,
+        TunnelConnectionFailed = -111,
+        SslClientAuthCertNeeded = -110,
+        AddressUnreachable = -109,
+        AddressInvalid = -108,
+        SslProtocolError = -107,
+        InternetDisconnected = -106,
+        NameNotResolved = -105,
+        ConnectionFailed = -104,
+        ConnectionAborted = -103,
+        ConnectionRefused = -102,
+        ConnectionReset = -101,
+        ConnectionClosed = -100,
+        BlockedByFingerprintingProtection = -34,
+        NetworkAccessRevoked = -33,
+        BlockedByOrb = -32,
+        BlockedByCsp = -30,
+        CleartextNotPermitted = -29,
+        BlockedByResponse = -27,
+        ContextShutDown = -26,
+        UploadStreamRewindNotSupported = -25,
+        SocketIsConnected = -23,
+        BlockedByAdministrator = -22,
+        NetworkChanged = -21,
+        BlockedByClient = -20,
+        FileVirusInfected = -19,
+        FileNoSpace = -18,
+        FilePathTooLong = -17,
+        FileExists = -16,
+        SocketNotConnected = -15,
+        UploadFileChanged = -14,
+        OutOfMemory = -13,
+        InsufficientResources = -12,
+        NotImplemented = -11,
+        AccessDenied = -10,
+        Unexpected = -9,
+        FileTooBig = -8,
+        TimedOut = -7,
+        FileNotFound = -6,
+        InvalidHandle = -5,
+        InvalidArgument = -4,
+        Aborted = -3,
+        Failed = -2,
+        IoPending = -1,
+        None = 0
+    }
+
+    public enum WebDownloadInterruptReason
+    {
+        None = 0,
+        FileFailed = 1,
+        FileAccessDenied = 2,
+        FileNoSpace = 3,
+        FileNameTooLong = 5,
+        FileTooLarge = 6,
+        FileVirusInfected = 7,
+        FileTransientError = 10,
+        FileBlocked = 11,
+        FileSecurityCheckFailed = 12,
+        FileTooShort = 13,
+        FileHashMismatch = 14,
+        FileSameAsSource = 15,
+        NetworkFailed = 20,
+        NetworkTimeout = 21,
+        NetworkDisconnected = 22,
+        NetworkServerDown = 23,
+        NetworkInvalidRequest = 24,
+        ServerFailed = 30,
+        ServerNoRange = 31,
+        ServerBadContent = 33,
+        ServerUnauthorized = 34,
+        ServerCertProblem = 35,
+        ServerForbidden = 36,
+        ServerUnreachable = 37,
+        ServerContentLengthMismatch = 38,
+        ServerCrossOriginRedirect = 39,
+        //UserCanceled = 40,
+        UserShutdown = 41,
+        Crash = 50
+    }
+
+    public class NavigationErrorEventArgs(WebErrorCode _ErrorCode, string _RawError, string _Url) : EventArgs
+    {
+        public string Url { get; } = _Url;
+        public string RawError { get; } = _RawError;
+        public WebErrorCode ErrorCode { get; } = _ErrorCode;
+    }
+
+    public class WebContextMenuEventArgs : EventArgs
+    {
+        public int X { get; set; }
+        public int Y { get; set; }
+        public string LinkText { get; set; }
+        public string LinkUrl { get; set; }
+        //public string MisspelledWord { get; set; }
+        public string SourceUrl { get; set; }
+        public string FrameUrl { get; set; }
+        public string SelectionText { get; set; }
+
+        public bool IsEditable { get; set; }
+        //public bool SpellCheck { get; set; }
+        public List<string> DictionarySuggestions { get; set; }
+        public WebContextMenuMediaType MediaType { get; set; }
+        public WebContextMenuType MenuType { get; set; }
+    }
+
+    public class WebDownloadItem
+    {
+        public WebEngineType Engine { get; set; }
+        public string ID { get; set; }
+        public string Url { get; set; }
+        public string FileName { get; set; }
+        public string FullPath { get; set; }
+        public string TempPath { get; set; }
+        public long ReceivedBytes { get; set; }
+        public long TotalBytes { get; set; }
+        public DateTime? EndTime { get; set; }
+        public double Progress => TotalBytes > 0 ? (double)ReceivedBytes / TotalBytes : 0;
+        public WebDownloadState State { get; set; }
+        public WebDownloadInterruptReason InterruptReason { get; set; } = WebDownloadInterruptReason.None;
+
+        public Action? Pause { get; set; }
+        public Action? Resume { get; set; }
+        public Action? Cancel { get; set; }
+        public bool Interruptible { get; set; }
+
+        public DateTime? CalculatedEndTime { get; set; }
+        public DateTime LastCheckTime = DateTime.Now;
+        public long LastReceivedBytes = 0;
+    }
+
+    public delegate Task<ProtocolResponse> ProtocolHandler(string Url, string Extra = "", CancellationToken? Token = null);
+
+    public class ProtocolResponse
+    {
+        public WebErrorCode ErrorCode { get; set; }
+        public int StatusCode { get; set; }
+        public string MimeType { get; set; }
+        public byte[] Data { get; set; }
+
+        public static ProtocolResponse FromString(string Content, string _MimeType = "text/html", int _StatusCode = 200, WebErrorCode _ErrorCode = WebErrorCode.None)
+        {
+            return new ProtocolResponse
+            {
+                MimeType = _MimeType,
+                ErrorCode = _ErrorCode,
+                StatusCode = _StatusCode,
+                Data = Encoding.UTF8.GetBytes(Content)
+            };
+        }
+
+        public static ProtocolResponse FromBytes(byte[] Data, string _MimeType = "application/octet-stream", int _StatusCode = 200, WebErrorCode _ErrorCode = WebErrorCode.None)
+        {
+            return new ProtocolResponse
+            {
+                MimeType = _MimeType,
+                ErrorCode = _ErrorCode,
+                StatusCode = _StatusCode,
+                Data = Data
+            };
+        }
+    }
+
+    public class BeforeNavigationEventArgs(string _Url, bool _IsMainFrame) : EventArgs
+    {
+        public string Url { get; } = _Url;
+        public bool IsMainFrame { get; } = _IsMainFrame;
+        public bool Cancel { get; set; }
+    }
+
+    public enum ScriptDialogType
+    {
+        Alert = 0,
+        Confirm = 1,
+        Prompt = 2,
+        BeforeUnload = 3
+    }
+    public class ScriptDialogEventArgs(ScriptDialogType _DialogType, string _Url, string _Text, string _DefaultPrompt, bool _IsReload = false) : EventArgs
+    {
+        public ScriptDialogType DialogType { get; } = _DialogType;
+        public string Url { get; } = _Url;
+        public string Text { get; } = _Text;
+        public string DefaultPrompt { get; } = _DefaultPrompt;
+
+        public bool Handled { get; set; }
+        public bool IsReload { get; } = _IsReload;
+        public bool Result { get; set; }
+        public string PromptResult { get; set; }
+    }
+
+    public enum ResourceRequestType
+    {
+        MainFrame = 0,
+        SubFrame = 1,
+
+        Stylesheet = 2,
+        Script = 3,
+        Image = 4,
+
+        Font = 5,
+        SubResource = 6,
+        Object = 7,
+        Media = 8,
+        Worker = 9,
+        SharedWorker = 10,
+        Prefetch = 11,
+        Favicon = 12,
+        XMLHTTPRequest = 13,
+        Ping = 14,
+        ServiceWorker = 15,
+        CSPReport = 16,
+        PluginResource = 17,
+        NavigationPreLoadMainFrame = 19,
+        NavigationPreLoadSubFrame = 20
+    }
+
+    public readonly struct FindResult(int _ActiveMatch, int _MatchCount)
+    {
+        public int ActiveMatch { get; } = _ActiveMatch;
+        public int MatchCount { get; } = _MatchCount;
+    }
+
+    public readonly struct LoadingStateResult(bool _IsLoading, int? _HttpStatusCode)
+    {
+        public bool IsLoading { get; } = _IsLoading;
+        public int? HttpStatusCode { get; } = _HttpStatusCode;
+    }
+
+    public readonly struct WebNavigationEntry
+    {
+        public int? ID { get; }
+        public bool IsCurrent { get; }
+        public string Url { get; }
+        public string Title { get; }
+        public WebNavigationEntry(bool _IsCurrent, string _Url, string _Title, int? _ID)
+        {
+            IsCurrent = _IsCurrent;
+            Url = _Url;
+            Title = _Title;
+            ID = _ID;
+        }
+        public WebNavigationEntry(bool _IsCurrent, string _Url)
+        {
+            IsCurrent = _IsCurrent;
+            Url = _Url;
+            Title = Utils.CleanUrl(_Url, true, true, true, false, true);
+        }
+    }
+
+    public readonly struct ResourceLoadedResult(string _Url, bool _Success, long _ReceivedContentLength, ResourceRequestType _RequestType)
+    {
+        public string Url { get; } = _Url;
+        public bool Success { get; } = _Success;
+        public long ReceivedContentLength { get; } = _ReceivedContentLength;
+        public ResourceRequestType ResourceRequestType { get; } = _RequestType;
+    }
+
+    /*public readonly struct ResourceRespondedResult(string _Url, ResourceRequestType _RequestType)
+    {
+        public string Url { get; } = _Url;
+        public ResourceRequestType ResourceRequestType { get; } = _RequestType;
+    }*/
+
+    public class ResponseInterceptedResult(string _Url, ResourceRequestType _RequestType, int _StatusCode, Func<Func<Stream, Task>, Task> _StreamProvider)
+    {
+        public string Url { get; } = _Url;
+        public ResourceRequestType ResourceRequestType { get; } = _RequestType;
+        public int StatusCode { get; } = _StatusCode;
+
+        private Func<Func<Stream, Task>, Task> StreamProvider = _StreamProvider;
+        public async Task CopyStream(Func<Stream, Task> Action) =>
+            await StreamProvider(Action);
+    }
+
+    public class ResourceRequestEventArgs(string _Url, string _FocusedUrl, string _Method, ResourceRequestType _RequestType, Dictionary<string, string> _Headers) : EventArgs
+    {
+        public string Url { get; } = _Url;
+        public string FocusedUrl { get; } = _FocusedUrl;
+        public string Method { get; } = _Method;
+        public ResourceRequestType ResourceRequestType { get; } = _RequestType;
+        public Dictionary<string, string> Headers { get; } = _Headers;
+
+        private Dictionary<string, string>? _ModifiedHeaders;
+        public Dictionary<string, string> ModifiedHeaders => _ModifiedHeaders ??= new(StringComparer.OrdinalIgnoreCase);
+        public WebResourceResponse? Response { get; set; } = null;
+
+        public bool Cancel { get; set; }
+        public bool Intercept { get; set; } = false;
+    }
+
+    public class WebResourceResponse(Stream Content, string MimeType = "text/plain", int? StatusCode = null)
+    {
+        public Stream Content { get; } = new AutoDisposingStream(Content);
+        public string MimeType { get; } = MimeType;
+        public int? StatusCode { get; } = StatusCode;
+        public Lazy<Dictionary<string, string>> Headers { get; } = new(() => new(StringComparer.OrdinalIgnoreCase));
+    }
+
+    public class WebAuthenticationRequestedEventArgs(string _Url) : EventArgs
+    {
+        public string Url { get; } = _Url;
+
+        public string? Username { get; set; }
+        public string? Password { get; set; }
+
+        public bool Cancel { get; set; }
+    }
+
+    public class ExternalProtocolEventArgs(string _Url, string _Origin) : EventArgs
+    {
+        public string Url { get; } = _Url;
+        public string Origin { get; } = _Origin;
+        public bool Launch { get; set; }
+    }
+
+    [Flags] public enum WebPermissionKind
+    {
+        None = 0,
+        ArSession = 1 << 0,
+        CameraPanTiltZoom = 1 << 1,
+        CameraStream = 1 << 2,
+        CapturedSurfaceControl = 1 << 3,
+        Clipboard = 1 << 4,
+        TopLevelStorageAccess = 1 << 5,
+        DiskQuota = 1 << 6,
+        LocalFonts = 1 << 7,
+        Geolocation = 1 << 8,
+        HandTracking = 1 << 9,
+        IdentityProvider = 1 << 10,
+        IdleDetection = 1 << 11,
+        MicStream = 1 << 12,
+        MidiSysex = 1 << 13,
+        MultipleDownloads = 1 << 14,
+        Notifications = 1 << 15,
+        KeyboardLock = 1 << 16,
+        PointerLock = 1 << 17,
+        ProtectedMediaIdentifier = 1 << 18,
+        RegisterProtocolHandler = 1 << 19,
+        StorageAccess = 1 << 20,
+        VrSession = 1 << 21,
+        WebAppInstallation = 1 << 22,
+        WindowManagement = 1 << 23,
+        FileSystemAccess = 1 << 24,
+        LocalNetworkAccess = 1 << 25,
+        RecordAudio = 1 << 26,
+        ScreenShare = 1 << 27,
+        LocalNetwork = 1 << 28,
+        LoopbackNetwork = 1 << 29,
+        Sensors = 1 << 30,
+    }
+
+    public enum WebPermissionState
+    {
+        Default = 0,
+        Allow = 1,
+        Deny = 2,
+        Ask = 3,
+    }
+
+    public static class WebViewUtils
+    {
+        public static ContentSettingTypes ToContentSettingType(this WebPermissionType State)
+        {
+            return State switch
+            {
+                WebPermissionType.Cookies => ContentSettingTypes.Cookies,
+                WebPermissionType.Images => ContentSettingTypes.Images,
+                WebPermissionType.JavaScript => ContentSettingTypes.JavaScript,
+                WebPermissionType.Popups => ContentSettingTypes.Popups,
+                WebPermissionType.Geolocation => ContentSettingTypes.Geolocation,
+                WebPermissionType.Notifications => ContentSettingTypes.Notifications,
+                WebPermissionType.MixedScript => ContentSettingTypes.MixedScript,
+                WebPermissionType.MediaStreamMic => ContentSettingTypes.MediaStreamMic,
+                WebPermissionType.MediaStreamCamera => ContentSettingTypes.MediaStreamCamera,
+                WebPermissionType.ProtocolHandlers => ContentSettingTypes.ProtocolHandlers,
+                WebPermissionType.AutomaticDownloads => ContentSettingTypes.AutomaticDownloads,
+                WebPermissionType.MidiSysex => ContentSettingTypes.MidiSysex,
+                WebPermissionType.ProtectedMediaIdentifier => ContentSettingTypes.ProtectedMediaIdentifier,
+                WebPermissionType.DurableStorage => ContentSettingTypes.DurableStorage,
+                WebPermissionType.BluetoothGuard => ContentSettingTypes.BluetoothGuard,
+                WebPermissionType.BackgroundSync => ContentSettingTypes.BackgroundSync,
+                WebPermissionType.Autoplay => ContentSettingTypes.Autoplay,
+                WebPermissionType.Ads => ContentSettingTypes.Ads,
+                WebPermissionType.Sound => ContentSettingTypes.Sound,
+                WebPermissionType.Sensors => ContentSettingTypes.Sensors,
+                WebPermissionType.PaymentHandler => ContentSettingTypes.PaymentHandler,
+                WebPermissionType.UsbGuard => ContentSettingTypes.UsbGuard,
+                WebPermissionType.IdleDetection => ContentSettingTypes.IdleDetection,
+                WebPermissionType.SerialGuard => ContentSettingTypes.SerialGuard,
+                WebPermissionType.BluetoothScanning => ContentSettingTypes.BluetoothScanning,
+                WebPermissionType.HidGuard => ContentSettingTypes.HidGuard,
+                WebPermissionType.LegacyCookieAccess => ContentSettingTypes.LegacyCookieAccess,
+                WebPermissionType.FileSystemWriteGuard => ContentSettingTypes.FileSystemWriteGuard,
+                WebPermissionType.Nfc => ContentSettingTypes.Nfc,
+                WebPermissionType.ClipboardReadWrite => ContentSettingTypes.ClipboardReadWrite,
+                WebPermissionType.Vr => ContentSettingTypes.Vr,
+                WebPermissionType.Ar => ContentSettingTypes.Ar,
+                WebPermissionType.FileSystemReadGuard => ContentSettingTypes.FileSystemReadGuard,
+                WebPermissionType.StorageAccess => ContentSettingTypes.StorageAccess,
+                WebPermissionType.CameraPanTiltZoom => ContentSettingTypes.CameraPanTiltZoom,
+                WebPermissionType.WindowManagement => ContentSettingTypes.WindowManagement,
+                WebPermissionType.InsecurePrivateNetwork => ContentSettingTypes.InsecurePrivateNetwork,
+                WebPermissionType.LocalFonts => ContentSettingTypes.LocalFonts,
+                WebPermissionType.JavascriptJit => ContentSettingTypes.JavascriptJit,
+                WebPermissionType.FederatedIdentityApi => ContentSettingTypes.FederatedIdentityApi,
+                WebPermissionType.PrivateNetworkGuard => ContentSettingTypes.PrivateNetworkGuard,
+                WebPermissionType.TopLevelStorageAccess => ContentSettingTypes.TopLevelStorageAccess,
+                WebPermissionType.FederatedIdentityAutoReauthnPermission => ContentSettingTypes.FederatedIdentityAutoReauthnPermission,
+                WebPermissionType.AntiAbuse => ContentSettingTypes.AntiAbuse,
+                WebPermissionType.ThirdPartyStoragePartitioning => ContentSettingTypes.ThirdPartyStoragePartitioning,
+                WebPermissionType.AutoPictureInPicture => ContentSettingTypes.AutoPictureInPicture,
+                WebPermissionType.FileSystemAccessExtendedPermission => ContentSettingTypes.FileSystemAccessExtendedPermission,
+                WebPermissionType.FileSystemAccessRestorePermission => ContentSettingTypes.FileSystemAccessRestorePermission,
+                WebPermissionType.CapturedSurfaceControl => ContentSettingTypes.CapturedSurfaceControl,
+                WebPermissionType.DirectSockets => ContentSettingTypes.DirectSockets,
+                WebPermissionType.KeyboardLock => ContentSettingTypes.KeyboardLock,
+                WebPermissionType.PointerLock => ContentSettingTypes.PointerLock,
+                WebPermissionType.JavascriptOptimizer => ContentSettingTypes.JavascriptOptimizer,
+                WebPermissionType.HandTracking => ContentSettingTypes.HandTracking,
+                WebPermissionType.WebAppInstallation => ContentSettingTypes.WebAppInstallation,
+                WebPermissionType.DirectSocketsPrivateNetworkAccess => ContentSettingTypes.DirectSocketsPrivateNetworkAccess,
+            };
+        }
+        public static ContentSettingValues ToContentSettingValue(this WebPermissionState State)
+        {
+            return State switch
+            {
+                WebPermissionState.Default => ContentSettingValues.Default,
+                WebPermissionState.Allow => ContentSettingValues.Allow,
+                WebPermissionState.Deny => ContentSettingValues.Block,
+                WebPermissionState.Ask => ContentSettingValues.Ask,
+            };
+        }
+        public static WebPermissionState ToWebPermissionValue(this ContentSettingValues State)
+        {
+            return State switch
+            {
+                ContentSettingValues.Default => WebPermissionState.Default,
+                ContentSettingValues.Allow => WebPermissionState.Allow,
+                ContentSettingValues.Block => WebPermissionState.Default,
+                ContentSettingValues.Ask => WebPermissionState.Ask,
+                _ => WebPermissionState.Default,
+            };
+        }
+        public static WebCookieSameSite ToWebCookieSameSite(this CoreWebView2CookieSameSiteKind State)
+        {
+            return State switch
+            {
+                CoreWebView2CookieSameSiteKind.None => WebCookieSameSite.None,
+                CoreWebView2CookieSameSiteKind.Lax => WebCookieSameSite.Lax,
+                CoreWebView2CookieSameSiteKind.Strict => WebCookieSameSite.Strict,
+                _ => WebCookieSameSite.Unspecified
+            };
+        }
+        public static CoreWebView2CookieSameSiteKind ToWebView2CookieSameSite(this WebCookieSameSite State)
+        {
+            return State switch
+            {
+                WebCookieSameSite.None => CoreWebView2CookieSameSiteKind.None,
+                WebCookieSameSite.Lax => CoreWebView2CookieSameSiteKind.Lax,
+                WebCookieSameSite.Strict => CoreWebView2CookieSameSiteKind.Strict,
+                _ => CoreWebView2CookieSameSiteKind.None
+            };
+        }
+        public static WebCookieSameSite ToWebCookieSameSite(this CookieSameSite State)
+        {
+            return State switch
+            {
+                CookieSameSite.Unspecified => WebCookieSameSite.Unspecified,
+                CookieSameSite.NoRestriction => WebCookieSameSite.None,
+                CookieSameSite.LaxMode => WebCookieSameSite.Lax,
+                CookieSameSite.StrictMode => WebCookieSameSite.Strict,
+                _ => WebCookieSameSite.Unspecified
+            };
+        }
+        /*public static WebCookiePriority ToWebCookiePriority(this CookiePriority State)
+        {
+            return State switch
+            {
+                CookiePriority.Low => WebCookiePriority.Low,
+                CookiePriority.Medium => WebCookiePriority.Medium,
+                CookiePriority.High => WebCookiePriority.High,
+                _ => WebCookiePriority.Low
+            };
+        }*/
+        public static CookieSameSite ToCefCookieSameSite(this WebCookieSameSite State)
+        {
+            return State switch
+            {
+                WebCookieSameSite.None => CookieSameSite.NoRestriction,
+                WebCookieSameSite.Lax => CookieSameSite.LaxMode,
+                WebCookieSameSite.Strict => CookieSameSite.StrictMode,
+                _ => CookieSameSite.Unspecified
+            };
+        }
+        /*public static CookiePriority ToCefCookiePriority(this WebCookiePriority State)
+        {
+            return State switch
+            {
+                WebCookiePriority.Low => CookiePriority.Low,
+                WebCookiePriority.Medium => CookiePriority.Medium,
+                WebCookiePriority.High => CookiePriority.High,
+                _ => CookiePriority.Low
+            };
+        }*/
+        public static PermissionRequestResult ToCefPermissionState(this WebPermissionState State)
+        {
+            return State switch
+            {
+                WebPermissionState.Deny => PermissionRequestResult.Deny,
+                WebPermissionState.Allow => PermissionRequestResult.Accept,
+                _ => PermissionRequestResult.Ignore
+            };
+        }
+        public static CefSharp.DevTools.Page.CaptureScreenshotFormat ToCefScreenshotFormat(this WebScreenshotFormat State)
+        {
+            return State switch
+            {
+                WebScreenshotFormat.PNG => CefSharp.DevTools.Page.CaptureScreenshotFormat.Png,
+                WebScreenshotFormat.JPEG => CefSharp.DevTools.Page.CaptureScreenshotFormat.Jpeg,
+                _ => CefSharp.DevTools.Page.CaptureScreenshotFormat.Webp,
+            };
+        }
+        public static CoreWebView2PermissionState ToWebView2PermissionState(this WebPermissionState State)
+        {
+            return State switch
+            {
+                WebPermissionState.Deny => CoreWebView2PermissionState.Deny,
+                WebPermissionState.Allow => CoreWebView2PermissionState.Allow,
+                _ => CoreWebView2PermissionState.Deny
+                //_ => CoreWebView2PermissionState.Default
+            };
+        }
+        public static WebContextMenuMediaType ToWebContextMenuMediaType(this ContextMenuMediaType Type)
+        {
+            return Type switch
+            {
+                ContextMenuMediaType.Audio => WebContextMenuMediaType.Audio,
+                ContextMenuMediaType.Video => WebContextMenuMediaType.Video,
+                ContextMenuMediaType.Plugin => WebContextMenuMediaType.Plugin,
+                ContextMenuMediaType.Canvas => WebContextMenuMediaType.Canvas,
+                ContextMenuMediaType.Image => WebContextMenuMediaType.Image,
+                ContextMenuMediaType.File => WebContextMenuMediaType.File,
+                _ => WebContextMenuMediaType.None
+            };
+        }
+
+        public static WebErrorCode ToWebErrorCode(this CefErrorCode Code)
+        {
+            return (WebErrorCode)Code;
+        }
+
+        public static WebErrorCode ToWebErrorCode(this CoreWebView2WebErrorStatus Code)
+        {
+            return Code switch
+            {
+                CoreWebView2WebErrorStatus.CannotConnect => WebErrorCode.ConnectionFailed,
+                CoreWebView2WebErrorStatus.ConnectionAborted => WebErrorCode.ConnectionAborted,
+                CoreWebView2WebErrorStatus.ConnectionReset => WebErrorCode.ConnectionReset,
+                CoreWebView2WebErrorStatus.Disconnected => WebErrorCode.InternetDisconnected,
+                CoreWebView2WebErrorStatus.ErrorHttpInvalidServerResponse => WebErrorCode.InvalidHttpResponse,
+                CoreWebView2WebErrorStatus.HostNameNotResolved => WebErrorCode.NameNotResolved,
+                CoreWebView2WebErrorStatus.OperationCanceled => WebErrorCode.ConnectionAborted,
+                CoreWebView2WebErrorStatus.RedirectFailed => WebErrorCode.InvalidRedirect,
+                CoreWebView2WebErrorStatus.ServerUnreachable => WebErrorCode.AddressUnreachable,
+                CoreWebView2WebErrorStatus.Timeout => WebErrorCode.TimedOut,
+                CoreWebView2WebErrorStatus.UnexpectedError => WebErrorCode.Unexpected,
+                CoreWebView2WebErrorStatus.ValidAuthenticationCredentialsRequired => WebErrorCode.MissingAuthCredentials,
+                CoreWebView2WebErrorStatus.ValidProxyAuthenticationRequired => WebErrorCode.ProxyAuthRequested,
+                CoreWebView2WebErrorStatus.CertificateIsInvalid => WebErrorCode.CertInvalid,
+                CoreWebView2WebErrorStatus.CertificateExpired => WebErrorCode.CertInvalid,
+                CoreWebView2WebErrorStatus.CertificateRevoked => WebErrorCode.CertRevoked,
+                CoreWebView2WebErrorStatus.CertificateCommonNameIsIncorrect => WebErrorCode.CertCommonNameInvalid,
+                CoreWebView2WebErrorStatus.ClientCertificateContainsErrors => WebErrorCode.CertContainsErrors,
+                CoreWebView2WebErrorStatus.Unknown => WebErrorCode.Failed,
+                _ => WebErrorCode.Failed
+            };
+        }
+
+        //https://learn.microsoft.com/en-us/dotnet/api/system.net.sockets.socketerror?view=net-10.0
+        public static WebErrorCode ToWebErrorCode(this SocketError Code)
+        {
+            return Code switch
+            {
+                SocketError.AccessDenied => WebErrorCode.AccessDenied,
+                SocketError.AddressAlreadyInUse => WebErrorCode.AddressInUse,
+                SocketError.AddressFamilyNotSupported => WebErrorCode.AddressInvalid,
+                SocketError.AddressNotAvailable => WebErrorCode.AddressInvalid,
+                SocketError.AlreadyInProgress => WebErrorCode.None,
+                SocketError.ConnectionAborted => WebErrorCode.ConnectionAborted,
+                SocketError.ConnectionReset => WebErrorCode.ConnectionReset,
+                SocketError.ConnectionRefused => WebErrorCode.ConnectionRefused,
+                SocketError.DestinationAddressRequired => WebErrorCode.AddressUnreachable,
+                SocketError.Disconnecting => WebErrorCode.InternetDisconnected,
+                SocketError.Fault => WebErrorCode.Failed,
+                SocketError.HostDown => WebErrorCode.NameNotResolved,
+                SocketError.HostNotFound => WebErrorCode.NameNotResolved,
+                SocketError.HostUnreachable => WebErrorCode.AddressUnreachable,
+                SocketError.InProgress => WebErrorCode.None,
+                SocketError.Interrupted => WebErrorCode.Aborted,
+                SocketError.InvalidArgument => WebErrorCode.InvalidArgument,
+                SocketError.IOPending => WebErrorCode.IoPending,
+                SocketError.IsConnected => WebErrorCode.SocketIsConnected,
+                SocketError.MessageSize => WebErrorCode.MsgTooBig,
+                SocketError.NetworkDown => WebErrorCode.InternetDisconnected,
+                SocketError.NetworkReset => WebErrorCode.NetworkChanged,
+                SocketError.NetworkUnreachable => WebErrorCode.NetworkAccessDenied,
+                SocketError.NoBufferSpaceAvailable => WebErrorCode.NoBufferSpace,
+                SocketError.NoData => WebErrorCode.EmptyResponse,
+                SocketError.NoRecovery => WebErrorCode.Failed,
+                SocketError.NotConnected => WebErrorCode.SocketNotConnected,
+                SocketError.NotInitialized => WebErrorCode.Failed,
+                SocketError.NotSocket => WebErrorCode.Failed,
+                SocketError.OperationAborted => WebErrorCode.Aborted,
+                SocketError.OperationNotSupported => WebErrorCode.MethodNotSupported,
+                SocketError.ProcessLimit => WebErrorCode.PreconnectMaxSocketLimit,
+                SocketError.ProtocolFamilyNotSupported => WebErrorCode.UnknownUrlScheme,
+                SocketError.ProtocolNotSupported => WebErrorCode.UnknownUrlScheme,
+                SocketError.ProtocolOption => WebErrorCode.Failed,
+                SocketError.ProtocolType => WebErrorCode.Failed,
+                SocketError.Shutdown => WebErrorCode.Failed,
+                SocketError.SocketError => WebErrorCode.Failed,
+                SocketError.SocketNotSupported => WebErrorCode.Failed,
+                SocketError.Success => WebErrorCode.None,
+                SocketError.SystemNotReady => WebErrorCode.Failed,
+                SocketError.TimedOut => WebErrorCode.TimedOut,
+                SocketError.TooManyOpenSockets => WebErrorCode.PreconnectMaxSocketLimit,
+                SocketError.TryAgain => WebErrorCode.TooManyRetries,
+                SocketError.TypeNotFound => WebErrorCode.Failed,
+                SocketError.VersionNotSupported => WebErrorCode.Failed,
+                SocketError.WouldBlock => WebErrorCode.BlockedByClient,
+                _ => WebErrorCode.Failed
+            };
+        }
+        /*public static WebContextMenuType ToWebContextMenuType(this ContextMenuType Type)
+        {
+            return Type switch
+            {
+                ContextMenuType.None => WebContextMenuType.None,
+                ContextMenuType.Page => WebContextMenuType.Page,
+                ContextMenuType.Media => WebContextMenuType.Media,
+                ContextMenuType.Frame => WebContextMenuType.Frame,
+                ContextMenuType.Link => WebContextMenuType.Link,
+                ContextMenuType.Selection => WebContextMenuType.Selection,
+                ContextMenuType.Editable => WebContextMenuType.Editable,
+                _ => WebContextMenuType.None
+            };
+        }*/
+        public static WebContextMenuType ToWebContextMenuType(this ContextMenuType Flags)
+        {
+            WebContextMenuType Type = 0;
+            if (Flags.HasFlag(ContextMenuType.Page)) Type |= WebContextMenuType.Page;
+            if (Flags.HasFlag(ContextMenuType.Link)) Type |= WebContextMenuType.Link;
+            //if (Flags.HasFlag(ContextMenuType.Frame)) Type |= WebContextMenuType.Frame; It just says frame for literally everything
+            if (Flags.HasFlag(ContextMenuType.Media)) Type |= WebContextMenuType.Media;
+            if (Flags.HasFlag(ContextMenuType.Selection)) Type |= WebContextMenuType.Selection;
+            if (Flags.HasFlag(ContextMenuType.Editable)) Type |= WebContextMenuType.Editable;
+            return Type;
+        }
+        public static WebContextMenuMediaType ToWebContextMenuMediaType(this CoreWebView2ContextMenuTargetKind Type)
+        {
+            return Type switch
+            {
+                CoreWebView2ContextMenuTargetKind.Audio => WebContextMenuMediaType.Audio,
+                CoreWebView2ContextMenuTargetKind.Video => WebContextMenuMediaType.Video,
+                CoreWebView2ContextMenuTargetKind.Image => WebContextMenuMediaType.Image,
+                _ => WebContextMenuMediaType.None
+            };
+        }
+        public static ResourceRequestType ToResourceRequestType(this ResourceType Type)
+        {
+            return Type switch
+            {
+                ResourceType.MainFrame => ResourceRequestType.MainFrame,
+                ResourceType.SubFrame => ResourceRequestType.SubFrame,
+                ResourceType.Stylesheet => ResourceRequestType.Stylesheet,
+                ResourceType.Script => ResourceRequestType.Script,
+                ResourceType.Image => ResourceRequestType.Image,
+                ResourceType.FontResource => ResourceRequestType.Font,
+                ResourceType.SubResource => ResourceRequestType.SubResource,
+                ResourceType.Object => ResourceRequestType.Object,
+                ResourceType.Media => ResourceRequestType.Media,
+                ResourceType.Worker => ResourceRequestType.Worker,
+                ResourceType.SharedWorker => ResourceRequestType.SharedWorker,
+                ResourceType.Prefetch => ResourceRequestType.Prefetch,
+                ResourceType.Favicon => ResourceRequestType.Favicon,
+                ResourceType.Xhr => ResourceRequestType.XMLHTTPRequest,
+                ResourceType.Ping => ResourceRequestType.Ping,
+                ResourceType.ServiceWorker => ResourceRequestType.ServiceWorker,
+                ResourceType.CspReport => ResourceRequestType.CSPReport,
+                ResourceType.PluginResource => ResourceRequestType.PluginResource,
+                ResourceType.NavigationPreLoadMainFrame => ResourceRequestType.NavigationPreLoadMainFrame,
+                ResourceType.NavigationPreLoadSubFrame => ResourceRequestType.NavigationPreLoadSubFrame,
+            };
+        }
+        /*public static WebContextMenuType ToWebContextMenuType(this CoreWebView2ContextMenuTargetKind Type)
+        {
+            switch (Type)
+            {
+                case CoreWebView2ContextMenuTargetKind.Page:
+                    return WebContextMenuType.Page;
+                case CoreWebView2ContextMenuTargetKind.SelectedText:
+                    return WebContextMenuType.Selection;
+                case CoreWebView2ContextMenuTargetKind.Image:
+                case CoreWebView2ContextMenuTargetKind.Audio:
+                case CoreWebView2ContextMenuTargetKind.Video:
+                    return WebContextMenuType.Media;
+                default:
+                    return WebContextMenuType.None;
+            };
+        }*/
+        public static WebContextMenuType MapWebContextMenuTarget(this CoreWebView2ContextMenuTarget Target)
+        {
+            WebContextMenuType Flags = 0;
+
+            switch (Target.Kind)
+            {
+                case CoreWebView2ContextMenuTargetKind.Page:
+                    Flags |= WebContextMenuType.Page;
+                    break;
+                case CoreWebView2ContextMenuTargetKind.SelectedText:
+                    Flags |= WebContextMenuType.Selection;
+                    break;
+                case CoreWebView2ContextMenuTargetKind.Image:
+                case CoreWebView2ContextMenuTargetKind.Audio:
+                case CoreWebView2ContextMenuTargetKind.Video:
+                    Flags |= WebContextMenuType.Media;
+                    break;
+            }
+            try
+            {
+                if (!string.IsNullOrEmpty(Target.LinkUri))
+                    Flags |= WebContextMenuType.Link;
+            }
+            catch { }
+            if (Target.IsEditable)
+                Flags |= WebContextMenuType.Editable;
+            return Flags;
+        }
+        /*public static CoreWebView2PermissionKind ToWebView2Permission(this WebPermissionKind Kind)
+        {
+            switch (Kind)
+            {
+                case WebPermissionKind.MicStream:
+                    return CoreWebView2PermissionKind.Microphone;
+                case WebPermissionKind.CameraStream:
+                    return CoreWebView2PermissionKind.Camera;
+                case WebPermissionKind.Geolocation:
+                    return CoreWebView2PermissionKind.Geolocation;
+                case WebPermissionKind.Notifications:
+                    return CoreWebView2PermissionKind.Notifications;
+                case WebPermissionKind.Clipboard:
+                    return CoreWebView2PermissionKind.ClipboardRead;
+                case WebPermissionKind.MultipleDownloads:
+                    return CoreWebView2PermissionKind.MultipleAutomaticDownloads;
+                case WebPermissionKind.FileSystemAccess:
+                    return CoreWebView2PermissionKind.FileReadWrite;
+                case WebPermissionKind.LocalFonts:
+                    return CoreWebView2PermissionKind.LocalFonts;
+                case WebPermissionKind.MidiSysex:
+                    return CoreWebView2PermissionKind.MidiSystemExclusiveMessages;
+                case WebPermissionKind.WindowManagement:
+                    return CoreWebView2PermissionKind.WindowManagement;
+                //case WebPermissionKind.Autop:
+                //    return CoreWebView2PermissionKind.Autoplay;
+                //case WebPermissionKind.:
+                //    return CoreWebView2PermissionKind.OtherSensors;
+                default:
+                    return CoreWebView2PermissionKind.UnknownPermission;
+            }
+        }*/
+        public static WebPermissionKind ToWebPermission(this MediaAccessPermissionType Kind)
+        {
+            WebPermissionKind Flags = WebPermissionKind.None;
+            if (Kind.HasFlag(MediaAccessPermissionType.AudioCapture))
+                Flags |= WebPermissionKind.MicStream;
+            if (Kind.HasFlag(MediaAccessPermissionType.VideoCapture))
+                Flags |= WebPermissionKind.CameraStream;
+            if (Kind.HasFlag(MediaAccessPermissionType.DesktopAudioCapture))
+                Flags |= WebPermissionKind.RecordAudio;
+            if (Kind.HasFlag(MediaAccessPermissionType.DesktopVideoCapture))
+                Flags |= WebPermissionKind.ScreenShare;
+            return Flags;
+        }
+        public static WebPermissionKind ToWebPermission(this FixedPermissionRequestType Kind)
+        {
+            WebPermissionKind Flags = WebPermissionKind.None;
+
+            if (Kind.HasFlag(FixedPermissionRequestType.ArSession))
+                Flags |= WebPermissionKind.ArSession;
+
+            if (Kind.HasFlag(FixedPermissionRequestType.CameraPanTiltZoom))
+                Flags |= WebPermissionKind.CameraPanTiltZoom;
+
+            if (Kind.HasFlag(FixedPermissionRequestType.CameraStream))
+                Flags |= WebPermissionKind.CameraStream;
+
+            if (Kind.HasFlag(FixedPermissionRequestType.CapturedSurfaceControl))
+                Flags |= WebPermissionKind.CapturedSurfaceControl;
+
+            if (Kind.HasFlag(FixedPermissionRequestType.Clipboard))
+                Flags |= WebPermissionKind.Clipboard;
+
+            if (Kind.HasFlag(FixedPermissionRequestType.TopLevelStorageAccess))
+                Flags |= WebPermissionKind.TopLevelStorageAccess;
+
+            if (Kind.HasFlag(FixedPermissionRequestType.DiskQuota))
+                Flags |= WebPermissionKind.DiskQuota;
+
+            if (Kind.HasFlag(FixedPermissionRequestType.LocalFonts))
+                Flags |= WebPermissionKind.LocalFonts;
+
+            if (Kind.HasFlag(FixedPermissionRequestType.Geolocation))
+                Flags |= WebPermissionKind.Geolocation;
+
+            if (Kind.HasFlag(FixedPermissionRequestType.IdentityProvider))
+                Flags |= WebPermissionKind.IdentityProvider;
+
+            if (Kind.HasFlag(FixedPermissionRequestType.IdleDetection))
+                Flags |= WebPermissionKind.IdleDetection;
+
+            if (Kind.HasFlag(FixedPermissionRequestType.MicStream))
+                Flags |= WebPermissionKind.MicStream;
+
+            if (Kind.HasFlag(FixedPermissionRequestType.MidiSysex))
+                Flags |= WebPermissionKind.MidiSysex;
+
+            if (Kind.HasFlag(FixedPermissionRequestType.MultipleDownloads))
+                Flags |= WebPermissionKind.MultipleDownloads;
+
+            if (Kind.HasFlag(FixedPermissionRequestType.Notifications))
+                Flags |= WebPermissionKind.Notifications;
+
+            if (Kind.HasFlag(FixedPermissionRequestType.KeyboardLock))
+                Flags |= WebPermissionKind.KeyboardLock;
+
+            if (Kind.HasFlag(FixedPermissionRequestType.PointerLock))
+                Flags |= WebPermissionKind.PointerLock;
+
+            if (Kind.HasFlag(FixedPermissionRequestType.ProtectedMediaIdentifier))
+                Flags |= WebPermissionKind.ProtectedMediaIdentifier;
+
+            if (Kind.HasFlag(FixedPermissionRequestType.RegisterProtocolHandler))
+                Flags |= WebPermissionKind.RegisterProtocolHandler;
+
+            if (Kind.HasFlag(FixedPermissionRequestType.StorageAccess))
+                Flags |= WebPermissionKind.StorageAccess;
+
+            if (Kind.HasFlag(FixedPermissionRequestType.VrSession))
+                Flags |= WebPermissionKind.VrSession;
+
+            if (Kind.HasFlag(FixedPermissionRequestType.WebAppInstallation))
+                Flags |= WebPermissionKind.WebAppInstallation;
+
+            if (Kind.HasFlag(FixedPermissionRequestType.WindowManagement))
+                Flags |= WebPermissionKind.WindowManagement;
+
+            if (Kind.HasFlag(FixedPermissionRequestType.FileSystemAccess))
+                Flags |= WebPermissionKind.FileSystemAccess;
+
+            if (Kind.HasFlag(FixedPermissionRequestType.LocalNetworkAccess))
+                Flags |= WebPermissionKind.LocalNetworkAccess;
+
+            if (Kind.HasFlag(FixedPermissionRequestType.LocalNetwork))
+                Flags |= WebPermissionKind.LocalNetwork;
+
+            if (Kind.HasFlag(FixedPermissionRequestType.LoopbackNetwork))
+                Flags |= WebPermissionKind.LoopbackNetwork;
+
+            if (Kind.HasFlag(FixedPermissionRequestType.Sensors))
+                Flags |= WebPermissionKind.Sensors;
+
+            return Flags;
+        }
+        public static WebPermissionKind ToWebPermission(this CoreWebView2PermissionKind Kind)
+        {
+            WebPermissionKind Flags = 0;
+
+            switch (Kind)
+            {
+                case CoreWebView2PermissionKind.Microphone:
+                    Flags |= WebPermissionKind.MicStream;
+                    break;
+                case CoreWebView2PermissionKind.Camera:
+                    Flags |= WebPermissionKind.CameraStream;
+                    break;
+                case CoreWebView2PermissionKind.Geolocation:
+                    Flags |= WebPermissionKind.Geolocation;
+                    break;
+                case CoreWebView2PermissionKind.Notifications:
+                    Flags |= WebPermissionKind.Notifications;
+                    break;
+                case CoreWebView2PermissionKind.ClipboardRead:
+                    Flags |= WebPermissionKind.Clipboard;
+                    break;
+                case CoreWebView2PermissionKind.MultipleAutomaticDownloads:
+                    Flags |= WebPermissionKind.MultipleDownloads;
+                    break;
+                case CoreWebView2PermissionKind.FileReadWrite:
+                    Flags |= WebPermissionKind.FileSystemAccess;
+                    break;
+                case CoreWebView2PermissionKind.LocalFonts:
+                    Flags |= WebPermissionKind.LocalFonts;
+                    break;
+                case CoreWebView2PermissionKind.MidiSystemExclusiveMessages:
+                    Flags |= WebPermissionKind.MidiSysex;
+                    break;
+                case CoreWebView2PermissionKind.WindowManagement:
+                    Flags |= WebPermissionKind.WindowManagement;
+                    break;
+                case CoreWebView2PermissionKind.PersistentStorage:
+                    Flags |= WebPermissionKind.StorageAccess;
+                    break;
+                //case CoreWebView2PermissionKind.Autoplay:
+                //    return WebPermissionKind.Autoplay;
+                case CoreWebView2PermissionKind.OtherSensors:
+                    return WebPermissionKind.Sensors;
+                default:
+                    return WebPermissionKind.None;
+            }
+            return Flags;
+        }
+        /*public static WebPermissionType ToWebPermissionType(this CoreWebView2PermissionKind Kind)
+        {
+            return Kind switch
+            {
+                CoreWebView2PermissionKind.Microphone => WebPermissionType.MediaStreamMic,
+                CoreWebView2PermissionKind.Camera => WebPermissionType.MediaStreamCamera,
+                CoreWebView2PermissionKind.Geolocation => WebPermissionType.Geolocation,
+                CoreWebView2PermissionKind.Notifications => WebPermissionType.Notifications,
+                CoreWebView2PermissionKind.ClipboardRead => WebPermissionType.ClipboardReadWrite,
+                CoreWebView2PermissionKind.MultipleAutomaticDownloads => WebPermissionType.AutomaticDownloads,
+                CoreWebView2PermissionKind.FileReadWrite => WebPermissionType.FileSystemAccessExtendedPermission,//TODO: Investigate.
+                CoreWebView2PermissionKind.LocalFonts => WebPermissionType.LocalFonts,
+                CoreWebView2PermissionKind.MidiSystemExclusiveMessages => WebPermissionType.MidiSysex,
+                CoreWebView2PermissionKind.WindowManagement => WebPermissionType.WindowManagement,
+                CoreWebView2PermissionKind.Autoplay => WebPermissionType.Autoplay,
+                CoreWebView2PermissionKind.OtherSensors => WebPermissionType.Sensors,
+                CoreWebView2PermissionKind.PersistentStorage => WebPermissionType.StorageAccess,
+            };
+        }*/
+        public static CoreWebView2PermissionKind? ToWebView2PermissionKind(this WebPermissionType Kind)
+        {
+            return Kind switch
+            {
+                WebPermissionType.MediaStreamMic => CoreWebView2PermissionKind.Microphone,
+                WebPermissionType.MediaStreamCamera => CoreWebView2PermissionKind.Camera,
+                WebPermissionType.Geolocation => CoreWebView2PermissionKind.Geolocation,
+                WebPermissionType.Notifications => CoreWebView2PermissionKind.Notifications,
+                WebPermissionType.ClipboardReadWrite => CoreWebView2PermissionKind.ClipboardRead,
+                WebPermissionType.AutomaticDownloads => CoreWebView2PermissionKind.MultipleAutomaticDownloads,
+                WebPermissionType.FileSystemAccessExtendedPermission => CoreWebView2PermissionKind.FileReadWrite,
+                WebPermissionType.LocalFonts => CoreWebView2PermissionKind.LocalFonts,
+                WebPermissionType.MidiSysex => CoreWebView2PermissionKind.MidiSystemExclusiveMessages,
+                WebPermissionType.WindowManagement => CoreWebView2PermissionKind.WindowManagement,
+                WebPermissionType.Autoplay => CoreWebView2PermissionKind.Autoplay,
+                WebPermissionType.Sensors => CoreWebView2PermissionKind.OtherSensors,
+                WebPermissionType.StorageAccess => CoreWebView2PermissionKind.PersistentStorage,
+                _ => null
+            };
+        }
+        public static WebPermissionState ToWebPermissionState(this CoreWebView2PermissionState Kind)
+        {
+            return Kind switch
+            {
+                CoreWebView2PermissionState.Default => WebPermissionState.Default,
+                CoreWebView2PermissionState.Allow => WebPermissionState.Allow,
+                CoreWebView2PermissionState.Deny => WebPermissionState.Deny,
+            };
+        }
+        public static ResourceRequestType ToResourceRequestType(this CoreWebView2WebResourceContext Kind)
+        {
+            switch (Kind)
+            {
+                case CoreWebView2WebResourceContext.Document:
+                    return ResourceRequestType.MainFrame;
+                case CoreWebView2WebResourceContext.Stylesheet:
+                    return ResourceRequestType.Stylesheet;
+                case CoreWebView2WebResourceContext.Image:
+                    return ResourceRequestType.Image;
+                case CoreWebView2WebResourceContext.Media:
+                    return ResourceRequestType.Media;
+                case CoreWebView2WebResourceContext.Font:
+                    return ResourceRequestType.Font;
+                case CoreWebView2WebResourceContext.Script:
+                    return ResourceRequestType.Script;
+                case CoreWebView2WebResourceContext.XmlHttpRequest:
+                    return ResourceRequestType.XMLHTTPRequest;
+                case CoreWebView2WebResourceContext.Fetch:
+                case CoreWebView2WebResourceContext.TextTrack:
+                case CoreWebView2WebResourceContext.EventSource:
+                case CoreWebView2WebResourceContext.Websocket:
+                case CoreWebView2WebResourceContext.Manifest:
+                case CoreWebView2WebResourceContext.SignedExchange:
+                    return ResourceRequestType.SubResource;
+                case CoreWebView2WebResourceContext.Ping:
+                    return ResourceRequestType.Ping;
+                case CoreWebView2WebResourceContext.CspViolationReport:
+                    return ResourceRequestType.CSPReport;
+                /*case CoreWebView2WebResourceContext.All:
+                case CoreWebView2WebResourceContext.Other:*/
+                default:
+                    return ResourceRequestType.SubResource;
+            }
+        }
+        public static ScriptDialogType ToScriptDialogType(this CoreWebView2ScriptDialogKind Kind)
+        {
+            return Kind switch
+            {
+                CoreWebView2ScriptDialogKind.Alert => ScriptDialogType.Alert,
+                CoreWebView2ScriptDialogKind.Confirm => ScriptDialogType.Confirm,
+                CoreWebView2ScriptDialogKind.Prompt => ScriptDialogType.Prompt,
+                CoreWebView2ScriptDialogKind.Beforeunload => ScriptDialogType.BeforeUnload,
+                _ => ScriptDialogType.Alert
+            };
+        }
+        public static WebDownloadInterruptReason ToWebDownloadInterruptReason(this CoreWebView2DownloadInterruptReason Reason)
+        {
+            return Reason switch
+            {
+                //CoreWebView2DownloadInterruptReason.None => WebDownloadInterruptReason.None,
+                CoreWebView2DownloadInterruptReason.FileFailed => WebDownloadInterruptReason.FileFailed,
+                CoreWebView2DownloadInterruptReason.FileAccessDenied => WebDownloadInterruptReason.FileAccessDenied,
+                CoreWebView2DownloadInterruptReason.FileNoSpace => WebDownloadInterruptReason.FileNoSpace,
+                CoreWebView2DownloadInterruptReason.FileNameTooLong => WebDownloadInterruptReason.FileNameTooLong,
+                CoreWebView2DownloadInterruptReason.FileTooLarge => WebDownloadInterruptReason.FileTooLarge,
+                CoreWebView2DownloadInterruptReason.FileMalicious => WebDownloadInterruptReason.FileVirusInfected,
+                CoreWebView2DownloadInterruptReason.FileTransientError => WebDownloadInterruptReason.FileTransientError,
+                CoreWebView2DownloadInterruptReason.FileBlockedByPolicy => WebDownloadInterruptReason.FileBlocked,
+                CoreWebView2DownloadInterruptReason.FileSecurityCheckFailed => WebDownloadInterruptReason.FileSecurityCheckFailed,
+                CoreWebView2DownloadInterruptReason.FileTooShort => WebDownloadInterruptReason.FileTooShort,
+                CoreWebView2DownloadInterruptReason.FileHashMismatch => WebDownloadInterruptReason.FileHashMismatch,
+                //NOTE: FileSameAsSource is absent within CoreWebView2DownloadInterruptReason.
+                //CoreWebView2DownloadInterruptReason.FileSameAsSource => WebDownloadInterruptReason.FileSameAsSource,
+                CoreWebView2DownloadInterruptReason.NetworkFailed => WebDownloadInterruptReason.NetworkFailed,
+                CoreWebView2DownloadInterruptReason.NetworkTimeout => WebDownloadInterruptReason.NetworkTimeout,
+                CoreWebView2DownloadInterruptReason.NetworkDisconnected => WebDownloadInterruptReason.NetworkDisconnected,
+                CoreWebView2DownloadInterruptReason.NetworkServerDown => WebDownloadInterruptReason.NetworkServerDown,
+                CoreWebView2DownloadInterruptReason.NetworkInvalidRequest => WebDownloadInterruptReason.NetworkInvalidRequest,
+                CoreWebView2DownloadInterruptReason.ServerFailed => WebDownloadInterruptReason.ServerFailed,
+                CoreWebView2DownloadInterruptReason.ServerNoRange=> WebDownloadInterruptReason.ServerNoRange,
+                CoreWebView2DownloadInterruptReason.ServerBadContent => WebDownloadInterruptReason.ServerBadContent,
+                CoreWebView2DownloadInterruptReason.ServerUnauthorized => WebDownloadInterruptReason.ServerUnauthorized,
+                CoreWebView2DownloadInterruptReason.ServerCertificateProblem => WebDownloadInterruptReason.ServerCertProblem,
+                CoreWebView2DownloadInterruptReason.ServerForbidden => WebDownloadInterruptReason.ServerForbidden,
+                CoreWebView2DownloadInterruptReason.ServerUnexpectedResponse => WebDownloadInterruptReason.ServerUnreachable,
+                CoreWebView2DownloadInterruptReason.ServerContentLengthMismatch => WebDownloadInterruptReason.ServerContentLengthMismatch,
+                CoreWebView2DownloadInterruptReason.ServerCrossOriginRedirect => WebDownloadInterruptReason.ServerCrossOriginRedirect,
+                //CoreWebView2DownloadInterruptReason.UserCanceled => WebDownloadInterruptReason.UserCanceled,
+                CoreWebView2DownloadInterruptReason.UserShutdown => WebDownloadInterruptReason.UserShutdown,
+                CoreWebView2DownloadInterruptReason.DownloadProcessCrashed => WebDownloadInterruptReason.Crash,
+                _ => WebDownloadInterruptReason.None
+            };
+        }
+        public static WebDownloadInterruptReason ToWebDownloadInterruptReason(this DownloadInterruptReason Reason)
+        {
+            return Reason switch
+            {
+                //DownloadInterruptReason.None => WebDownloadInterruptReason.None,
+                DownloadInterruptReason.FileFailed => WebDownloadInterruptReason.FileFailed,
+                DownloadInterruptReason.FileAccessDenied => WebDownloadInterruptReason.FileAccessDenied,
+                DownloadInterruptReason.FileNoSpace => WebDownloadInterruptReason.FileNoSpace,
+                DownloadInterruptReason.FileNameTooLong => WebDownloadInterruptReason.FileNameTooLong,
+                DownloadInterruptReason.FileTooLarge => WebDownloadInterruptReason.FileTooLarge,
+                DownloadInterruptReason.FileVirusInfected => WebDownloadInterruptReason.FileVirusInfected,
+                DownloadInterruptReason.FileTransientError => WebDownloadInterruptReason.FileTransientError,
+                DownloadInterruptReason.FileBlocked => WebDownloadInterruptReason.FileBlocked,
+                DownloadInterruptReason.FileSecurityCheckFailed => WebDownloadInterruptReason.FileSecurityCheckFailed,
+                DownloadInterruptReason.FileTooShort => WebDownloadInterruptReason.FileTooShort,
+                DownloadInterruptReason.FileHashMismatch => WebDownloadInterruptReason.FileHashMismatch,
+                DownloadInterruptReason.FileSameAsSource => WebDownloadInterruptReason.FileSameAsSource,
+                DownloadInterruptReason.NetworkFailed => WebDownloadInterruptReason.NetworkFailed,
+                DownloadInterruptReason.NetworkTimeout => WebDownloadInterruptReason.NetworkTimeout,
+                DownloadInterruptReason.NetworkDisconnected => WebDownloadInterruptReason.NetworkDisconnected,
+                DownloadInterruptReason.NetworkServerDown => WebDownloadInterruptReason.NetworkServerDown,
+                DownloadInterruptReason.NetworkInvalidRequest => WebDownloadInterruptReason.NetworkInvalidRequest,
+                DownloadInterruptReason.ServerFailed => WebDownloadInterruptReason.ServerFailed,
+                DownloadInterruptReason.ServerNoRange=> WebDownloadInterruptReason.ServerNoRange,
+                DownloadInterruptReason.ServerBadContent => WebDownloadInterruptReason.ServerBadContent,
+                DownloadInterruptReason.ServerUnauthorized => WebDownloadInterruptReason.ServerUnauthorized,
+                DownloadInterruptReason.ServerCertProblem => WebDownloadInterruptReason.ServerCertProblem,
+                DownloadInterruptReason.ServerForbidden => WebDownloadInterruptReason.ServerForbidden,
+                DownloadInterruptReason.ServerUnreachable => WebDownloadInterruptReason.ServerUnreachable,
+                DownloadInterruptReason.ServerContentLengthMismatch => WebDownloadInterruptReason.ServerContentLengthMismatch,
+                DownloadInterruptReason.ServerCrossOriginRedirect => WebDownloadInterruptReason.ServerCrossOriginRedirect,
+                //DownloadInterruptReason.UserCanceled => WebDownloadInterruptReason.UserCanceled,
+                DownloadInterruptReason.UserShutdown => WebDownloadInterruptReason.UserShutdown,
+                DownloadInterruptReason.Crash => WebDownloadInterruptReason.Crash,
+                _ => WebDownloadInterruptReason.None
+            };
+        }
+    }
+
+    public class PermissionRequestedEventArgs(string _Url, WebPermissionKind _Kind) : EventArgs
+    {
+        public string Url { get; } = _Url;
+        public WebPermissionKind Kind { get; } = _Kind;
+        public WebPermissionState State { get; set; } = WebPermissionState.Default;
+    }
+
+    public class NewTabRequestEventArgs(string _Url, bool _Background, Rect? _Popup) : EventArgs
+    {
+        public string Url { get; } = _Url;
+        public bool Background { get; } = _Background;
+        public Rect? Popup { get; } = _Popup;
+        public IWebView? WebView { get; set; }
+    }
+
+    public struct WebUserAgentBrand
+    {
+        public string Brand { get; set; }
+        public string Version { get; set; }
+    }
+
+    public struct WebUserAgentMetaData
+    {
+        public IList<WebUserAgentBrand> Brands { get; set; }
+        public string FullVersion { get; set; }
+        public string Platform { get; set; }
+        public string PlatformVersion { get; set; }
+        public string Architecture { get; set; }
+        public string Model { get; set; }
+        public bool Mobile { get; set; }
+    }
+
+    public class WebViewBrowserSettings
+    {
+        public bool JavaScript = true;
+        public bool JavaScriptMessage = true;
+        public bool Private = false;
+        public bool AudioListener = false;
+    }
+
+    public interface IWebView : IDisposable
+    {
+        string Address { get; set; }
+        string Title { get; }
+        string Favicon { get; }
+        WebEngineType Engine { get; }
+
+        bool CanGoBack { get; }
+        bool CanGoForward { get; }
+        bool CanReload { get; }
+        bool IsLoading { get; }
+        bool IsBrowserInitialized { get; }
+
+        bool IsSecure { get; }
+
+        bool AudioPlaying { get; }
+        bool IsMuted { get; set; }
+
+        double ZoomFactor { get; set; }
+
+        void Navigate(string Url);
+        void Back();
+        void Forward();
+        void Refresh(bool IgnoreCache = false, bool ClearCache = false);
+        void Stop();
+        void Print();
+
+        void Cut();
+        void Copy();
+        void Paste();
+        void Delete();
+        void SelectAll();
+        void Undo();
+        void Redo();
+
+        void Find(string Text, bool Forward, bool MatchCase, bool FindNext);
+        void StopFind();
+        void SaveAs();
+        void OpenTaskManager();
+
+        event EventHandler AudioPlayingChanged;
+        event EventHandler<bool> FullscreenChanged;
+        event EventHandler<ScriptDialogEventArgs> ScriptDialogOpened;
+        event EventHandler<BeforeNavigationEventArgs> BeforeNavigation;
+        event EventHandler<NewTabRequestEventArgs> NewTabRequested;
+
+        event EventHandler<string> FrameLoadStart;
+        event EventHandler<string> FrameLoadEnd;
+
+        event EventHandler IsBrowserInitializedChanged;
+
+        event EventHandler<LoadingStateResult> LoadingStateChanged;
+        event EventHandler<string> TitleChanged;
+        event EventHandler<string> StatusMessage;
+        event EventHandler<string> FaviconChanged;
+        event EventHandler<string> AddressChanged;
+        event EventHandler<FindResult> FindResult;
+        event EventHandler<string> JavaScriptMessageReceived;
+
+        event EventHandler<ResourceRequestEventArgs> ResourceRequested;
+        //Consider switching to things like EventHandler<(string Url, ResourceRequestType ResourceRequestType)>
+        //event EventHandler<ResourceRespondedResult> ResourceResponded;
+        event EventHandler<ResponseInterceptedResult> ResponseIntercepted;
+        event EventHandler<ResourceLoadedResult> ResourceLoaded;
+        event EventHandler<PermissionRequestedEventArgs> PermissionRequested;
+
+        /*event Action<WebDownloadItem> DownloadStarted;
+        event Action<WebDownloadItem> DownloadUpdated;
+        event Action<WebDownloadItem> DownloadCompleted;*/
+
+        event EventHandler<WebContextMenuEventArgs> ContextMenuRequested;
+        event EventHandler<WebAuthenticationRequestedEventArgs> AuthenticationRequested;
+        event EventHandler<ExternalProtocolEventArgs> ExternalProtocolRequested;
+        event EventHandler<NavigationErrorEventArgs> NavigationError;
+
+        Task<byte[]> TakeScreenshotAsync(WebScreenshotFormat Format, Rect? Viewport = null);
+        Task<string> GetSourceAsync();
+
+        void Download(string Url);
+
+        bool CanExecuteJavascript { get; }
+        void ExecuteScript(string Script);
+        Task<object?> EvaluateScriptAsync(string Script);
+        Task<string> CallDevToolsAsync(string Method, object? Parameters = null);
+        void SubscribeDevToolsEvent(string Event, Action<string> Handler);
+        //Task ClearBrowsingDataAsync(WebViewBrowsingDataTypes DataType);
+        Task<List<WebNavigationEntry>> GetNavigationHistoryAsync();
+        Task<long?> GetMemoryUsage();
+        Task<IWebCookieManager> GetCookieManager();
+        Task<IPermissionManager?> GetPermissionManager();
+
+        public FrameworkElement Control { get; }
+    }
+
+    public class HistoryMockHandler : ResourceRequestHandler
+    {
+        protected override IResourceHandler GetResourceHandler(IWebBrowser chromiumWebBrowser, IBrowser browser, IFrame frame, IRequest request)
+        {
+            return ResourceHandler.FromString(App.HistoryPlaceholder);
+        }
+    }
+
+    public class HistoryMockRequestHandler : RequestHandler
+    {
+        protected override IResourceRequestHandler GetResourceRequestHandler(IWebBrowser chromiumWebBrowser, IBrowser browser, IFrame frame, IRequest request, bool isNavigation, bool isDownload, string requestInitiator, ref bool disableDefaultHandling)
+        {
+            return new HistoryMockHandler();
+        }
+    }
+
+    public class ChromiumWebView : IWebView, IDisposable, IRequestHandler, IDisplayHandler
+    {
+        public ChromiumWebBrowser Browser;
+        public WebViewBrowserSettings Settings;
+        private readonly List<WebNavigationEntry> InitialUrls;
+
+        public ChromiumWebView(List<WebNavigationEntry> Urls = null, WebViewBrowserSettings _Settings = null)
+        {
+            InitialUrls = Urls ?? [new(true, "about:blank")];
+            Settings = _Settings ?? new WebViewBrowserSettings();
+            WebViewManager.WebViews.Add(this);
+        }
+
+        public async Task InitializeAsync()
+        {
+            if (!WebViewManager.IsCefInitialized)
+                await WebViewManager.InitializeCEF();
+            Browser = new ChromiumWebBrowser();
+            WebViewManager.ChromiumWebViews[Browser] = this;
+
+            BrowserSettings _BrowserSettings = new()
+            {
+                ChromeStatusBubble = CefState.Disabled,
+                ChromeZoomBubble = CefState.Disabled,
+                Javascript = Settings.JavaScript ? CefState.Default : CefState.Disabled,
+                WebGl = WebViewManager.Settings.Performance == PerformancePreset.Low ? CefState.Disabled : CefState.Default
+            };
+            Browser.BrowserSettings = _BrowserSettings;
+
+            if (Settings.Private)
+            {
+                _BrowserSettings.LocalStorage = CefState.Disabled;
+                _BrowserSettings.Databases = CefState.Disabled;
+                _BrowserSettings.JavascriptAccessClipboard = CefState.Disabled;
+                _BrowserSettings.JavascriptDomPaste = CefState.Disabled;
+                RequestContextSettings ContextSettings = new()
+                {
+                    PersistSessionCookies = false,
+                    CachePath = null
+                };
+                RequestContext PrivateRequestContext = new(ContextSettings);
+                /*IRequestContext _RequestContext = Browser.RequestContext;
+                if (_RequestContext != null && !_RequestContext.IsGlobal)
+                {*/
+                foreach (var Scheme in WebViewManager.Settings.Schemes)
+                    PrivateRequestContext.RegisterSchemeHandlerFactory(Scheme.Key, string.Empty, new ChromiumProtocolHandlerFactory(Scheme.Value));
+                //}
+
+                Browser.RequestContext = PrivateRequestContext;
+            }
+
+            Browser.IsBrowserInitializedChanged += Browser_IsBrowserInitializedChanged;
+            Browser.FrameLoadStart += Browser_FrameLoadStart;
+            Browser.FrameLoadEnd += Browser_FrameLoadEnd;
+            Browser.LoadingStateChanged += Browser_LoadingStateChanged;
+            Browser.TitleChanged += Browser_TitleChanged;
+            Browser.StatusMessage += Browser_StatusMessage;
+            Browser.LoadError += Browser_LoadError;
+            Browser.JavascriptObjectRepository.Settings.JavascriptBindingApiEnabled = Settings.JavaScriptMessage;
+            if (Settings.JavaScriptMessage || Settings.AudioListener)
+            {
+                Browser.JavascriptObjectRepository.Settings.JavascriptBindingApiGlobalObjectName = "engine";
+                //Browser.JavascriptMessageReceived += (s, e) => JavaScriptMessageReceived.RaiseUIAsync(this, e.Message?.ToString() ?? "");
+                Browser.JavascriptMessageReceived += Browser_JavascriptMessageReceived;
+            }
+
+            Browser.DisplayHandler = this;
+            Browser.RequestHandler = this;
+            Browser.LifeSpanHandler = WebViewManager.GlobalLifeSpanHandler;
+            Browser.JsDialogHandler = WebViewManager.GlobalJsDialogHandler;
+            Browser.KeyboardHandler = WebViewManager.GlobalKeyboardHandler;
+            Browser.PermissionHandler = WebViewManager.GlobalPermissionHandler;
+            Browser.DownloadHandler = WebViewManager.GlobalDownloadHandler;
+            Browser.MenuHandler = WebViewManager.GlobalContextMenuHandler;
+            Browser.FindHandler = WebViewManager.GlobalFindHandler;
+            Browser.DialogHandler = WebViewManager.GlobalDialogHandler;
+            Browser.ResourceRequestHandlerFactory = new OverrideResourceRequestHandlerFactory(this);
+            ZoomFactor = 1;
+        }
+
+        private void Browser_JavascriptMessageReceived(object? sender, JavascriptMessageReceivedEventArgs e)
+        {
+            string Json;
+            try
+            {
+                Json = JsonSerializer.Serialize(e.Message);
+            }
+            catch
+            {
+                Json = e.Message?.ToString() ?? string.Empty;
+            }
+            if (Settings.AudioListener && Json.EndsWith(@"""type"":""__cef_audio__""}"))
+            {
+                SetAudioPlaying(Json.StartsWith(@"{""play"":1"));
+                return;
+            }
+            JavaScriptMessageReceived.RaiseUIAsync(this, Json);
+        }
+
+        private void Browser_LoadError(object? sender, LoadErrorEventArgs e)
+        {
+            if (e.ErrorCode is CefErrorCode.Aborted or CefErrorCode.IoPending or CefErrorCode.BlockedByClient or CefErrorCode.BlockedByResponse)
+                return;
+            if (InitializingHistory) return;
+            NavigationError?.RaiseUIAsync(this, new NavigationErrorEventArgs(e.ErrorCode.ToWebErrorCode(), e.ErrorText, e.FailedUrl));
+        }
+        public void RaiseNavigationError(NavigationErrorEventArgs e)
+        {
+            if (InitializingHistory) return;
+            NavigationError?.RaiseUIAsync(this, e);
+        }
+        private void Browser_StatusMessage(object? sender, StatusMessageEventArgs e) => StatusMessage?.RaiseUIAsync(this, e.Value);
+        private void Browser_TitleChanged(object sender, DependencyPropertyChangedEventArgs e)
+        {
+            if (InitializingHistory) return;
+            TitleChanged?.RaiseUIAsync(this, Browser.Title);
+        }
+        private void Browser_FrameLoadEnd(object? sender, FrameLoadEndEventArgs e)
+        {
+            if (InitializingHistory) return;
+            FrameLoadEnd?.RaiseUIAsync(this, e.Url);
+        }
+        bool InitializingHistory = false;
+        private async void Browser_IsBrowserInitializedChanged(object? sender, EventArgs e)
+        {
+            Browser?.Dispatcher.BeginInvoke(() => IsBrowserInitializedChanged?.Invoke(this, EventArgs.Empty));
+
+            try
+            {
+                //High memory usage observed with back/forward cache.
+
+                //TODO: 2nd final entry consistently triggers LoadingStateChanged.
+                if (Browser?.IsBrowserInitialized ?? false)
+                {
+                    TaskCompletionSource<bool> NavigationTaskCompletion = null;
+                    void Browser_MockFrameLoadEnd(object? sender, FrameLoadEndEventArgs e)
+                    {
+                        NavigationTaskCompletion?.TrySetResult(true);
+                    }
+                    bool LastActive = InitialUrls.Last().IsCurrent == true;
+                    int CurrentIndex = InitialUrls.IndexOf(InitialUrls.First(i => i.IsCurrent));
+                    IRequestHandler PreviousRequestHandler = Browser?.RequestHandler;
+                    Visibility PreviousVisible = Browser?.Visibility ?? Visibility.Visible;
+                    Browser?.Visibility = Visibility.Hidden;
+                    bool ContainsTravelLog = InitialUrls.Count > 1;
+                    if (ContainsTravelLog)
+                    {
+                        Browser?.RequestHandler = new HistoryMockRequestHandler();
+                        Browser?.FrameLoadEnd += Browser_MockFrameLoadEnd;
+                    }
+                    for (int i = 0; i < InitialUrls.Count; i++)
+                    {
+                        InitializingHistory = !LastActive || i < InitialUrls.Count - 1;
+                        if (!InitializingHistory)
+                            Browser?.RequestHandler = PreviousRequestHandler;
+                        if (ContainsTravelLog)
+                            NavigationTaskCompletion = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+
+                        Browser?.Load(InitialUrls[i].Url);
+
+                        if (ContainsTravelLog)
+                            await NavigationTaskCompletion.Task;
+                    }
+                    Browser?.Visibility = PreviousVisible;
+                    Browser?.RequestHandler = PreviousRequestHandler;
+                    Browser?.FrameLoadEnd -= Browser_MockFrameLoadEnd;
+                    if (Browser != null)
+                        await Browser.WaitForInitialLoadAsync();
+                    InitializingHistory = false;
+                    if (!LastActive)
+                    {
+                        List<WebNavigationEntry> History = await GetNavigationHistoryAsync();
+                        if (CurrentIndex < History.Count - 1)
+                        {
+                            WebNavigationEntry SelectedHistory = History[CurrentIndex];
+                            await CallDevToolsAsync("Page.navigateToHistoryEntry", new
+                            {
+                                entryId = SelectedHistory.ID
+                            });
+                        }
+                    }
+                    if (Browser != null)
+                    {
+                        DevToolsClient Client = Browser.GetDevToolsClient();
+                        Client.DevToolsEvent += (s, e) => DispatchDevToolsEvent(e.EventName, e.ParametersAsJsonString);
+                    }
+                }
+            }
+            catch (Exception Ex) when (Ex is NullReferenceException || Ex is TaskCanceledException)
+            {
+                InitializingHistory = false;
+                return;
+            }
+
+            /*if (Settings.Private)
+            {
+                nint HWND = Browser.GetBrowserHost().GetWindowHandle();
+                IntPtr ChildHWND = DllUtils.GetWindow(HWND, DllUtils.GetWindowCommand.GW_CHILD);
+                DllUtils.SetWindowDisplayAffinity(ChildHWND, DllUtils.WindowDisplayAffinity.WDA_MONITOR);
+            }*/
+        }
+
+        private void Browser_FrameLoadStart(object? sender, FrameLoadStartEventArgs e)
+        {
+            if (e.Frame.IsMain)
+            {
+                Favicon = string.Empty;
+                if (!InitializingHistory)
+                    FaviconChanged?.RaiseUIAsync(this, Favicon);
+            }
+            if (InitializingHistory) return;
+            FrameLoadStart?.RaiseUIAsync(this, e.Url);
+            if (Settings.AudioListener)
+                ExecuteScript(Scripts.CefAudioScript);
+        }
+
+        private DateTime LastStateChange = DateTime.MinValue;
+        private string? LastStateAddress = null;
+
+        private int StateChangeCount = 0;
+        private bool LimitStateChanges = false;
+        private TimeSpan StateChangeCooldown = TimeSpan.FromMilliseconds(500);
+
+        private async void Browser_LoadingStateChanged(object? sender, LoadingStateChangedEventArgs e)
+        {
+            if (InitializingHistory) return;
+            CanGoBack = e.CanGoBack;
+            CanGoForward = e.CanGoForward;
+            CanReload = e.CanReload;
+
+            //if (!App.Instance.HighPerformanceMode)
+            //{
+            StateChangeCount++;
+
+            //LoadingStateChanged constantly triggered by https://www.skeptrune.com/posts/use-the-accept-header-to-serve-markdown-instead-of-html-to-llms/
+            //NOTE: IPC protection.
+            string _Address = CurrentAddress ?? InitialUrls.Last().Url;
+            if (_Address != LastStateAddress)
+            {
+                StateChangeCount = 0;
+                if (LimitStateChanges)
+                {
+                    StateChangeCooldown = TimeSpan.FromMilliseconds(500);
+                    LimitStateChanges = false;
+                }
+                LastStateChange = DateTime.MinValue;
+                LastStateAddress = _Address;
+            }
+            else
+            {
+                if (DateTime.Now - LastStateChange < StateChangeCooldown)
+                {
+                    if (!LimitStateChanges && StateChangeCount > 5)
+                    {
+                        LimitStateChanges = true;
+                        StateChangeCooldown = TimeSpan.FromMilliseconds(1000);
+                    }
+                    if (LimitStateChanges)
+                    {
+                        if (IsLoading != false)
+                        {
+                            IsLoading = false;
+                            LoadingStateChanged?.RaiseUIAsync(this, new LoadingStateResult(false, null));
+                        }
+                        return;
+                    }
+                }
+                else if (!LimitStateChanges)
+                    StateChangeCount = 0;
+                LastStateChange = DateTime.Now;
+            }
+            //}
+            IsLoading = e.IsLoading;
+            NavigationEntry _NavigationEntry = await Browser.GetVisibleNavigationEntryAsync();
+            IsSecure = _NavigationEntry != null ? _NavigationEntry.SslStatus.IsSecureConnection : Address.StartsWith("https:");
+            IsViewSource = _NavigationEntry?.DisplayUrl.StartsWith("view-source:") ?? false;
+            LoadingStateChanged?.RaiseUIAsync(this, new LoadingStateResult(e.IsLoading, _NavigationEntry?.HttpStatusCode));
+        }
+
+        public WebEngineType Engine => WebEngineType.Chromium;
+
+        private string CurrentAddress;
+        public string Address
+        {
+            get => (IsViewSource ? "view-source:" : string.Empty) + (Browser?.Address != null ? CurrentAddress : InitialUrls.Last().Url);
+            set => Navigate(value);
+        }
+        public string Title => Browser?.Title ?? string.Empty;
+        public string Favicon { get; private set; } = string.Empty;
+
+        public bool CanGoBack { get; private set; }
+        public bool CanGoForward { get; private set; }
+        public bool CanReload { get; private set; }
+        public bool IsLoading { get; private set; }
+        public bool IsBrowserInitialized => Browser?.IsBrowserInitialized ?? false;
+
+        public bool IsSecure { get; private set; }
+        public bool AudioPlaying { get; private set; }
+
+        private bool _IsMuted;
+        public bool IsMuted
+        {
+            get => _IsMuted;
+            /*{
+                //This causes a freeze when reloading on PDF
+                return Cef.UIThreadTaskFactory.StartNew(() =>
+                {
+                    return Browser.GetBrowserHost()?.IsAudioMuted ?? false;
+                }).Result;
+            }*/
+            set
+            {
+                _IsMuted = value;
+                if (Browser.IsBrowserInitialized)
+                    Application.Current.Dispatcher.BeginInvoke(() => Cef.UIThreadTaskFactory.StartNew(() => Browser?.GetBrowserHost()?.SetAudioMuted(value)));
+            }
+        }
+
+        public double ZoomFactor
+        {
+            get => Browser.ZoomLevel + 1;
+            set => Browser.ZoomLevel = value - 1;
+        }
+
+        bool IsViewSource;
+        public void Navigate(string Url)
+        {
+            if (Browser.IsBrowserInitialized)
+                Browser?.Dispatcher.Invoke(() => Browser?.Load(Url));
+        }
+        public void Back()
+        {
+            if (CanGoBack && Browser.IsBrowserInitialized)
+                Browser?.Back();
+        }
+        public void Forward()
+        {
+            if (CanGoForward && Browser.IsBrowserInitialized)
+                Browser?.Forward();
+        }
+        public void Refresh(bool IgnoreCache = false, bool ClearCache = false)
+        {
+            if (!Browser.IsBrowserInitialized)
+                return;
+            if (ClearCache)
+            {
+                if (WebViewManager.Settings.CefRuntimeStyle == CefRuntimeStyle.Chrome)
+                {
+                    Browser.ExecuteChromeCommand(Cef.MapChromeCommandNameToId("IDC_RELOAD_CLEARING_CACHE"), WindowOpenDisposition.CurrentTab);
+                    return;
+                }
+                else
+                {
+                    using DevToolsClient _DevToolsClient = Browser.GetDevToolsClient();
+                    _DevToolsClient.Page.ClearCompilationCacheAsync();
+                    _DevToolsClient.Network.ClearBrowserCacheAsync();
+                }
+            }
+            Browser?.Reload(IgnoreCache);
+        }
+        public void Stop()
+        {
+            if (Browser.IsBrowserInitialized)
+                Browser?.Stop();
+        }
+        public void Print()
+        {
+            if (Browser.IsBrowserInitialized)
+                Browser?.Print();
+        }
+        public void SetFindResult(int ActiveMatch, int MatchCount) => FindResult.RaiseUIAsync(this, new FindResult(ActiveMatch, MatchCount));
+        public void Find(string Text, bool Forward, bool MatchCase, bool FindNext)
+        {
+            if (Browser.IsBrowserInitialized)
+                Browser?.Find(Text, Forward, MatchCase, FindNext);
+        }
+        public void StopFind()
+        {
+            if (Browser.IsBrowserInitialized)
+                Browser?.StopFinding(true);
+        }
+
+        public void SaveAs()
+        {
+            if (!Browser.IsBrowserInitialized) return;
+            if (WebViewManager.Settings.CefRuntimeStyle == CefRuntimeStyle.Chrome)
+                Browser?.ExecuteChromeCommand(Cef.MapChromeCommandNameToId("IDC_SAVE_PAGE"), WindowOpenDisposition.CurrentTab);
+            else
+                Browser?.StartDownload(Address);
+        }
+
+        public void OpenTaskManager()
+        {
+            if (!Browser.IsBrowserInitialized) return;
+            if (WebViewManager.Settings.CefRuntimeStyle == CefRuntimeStyle.Chrome)
+                Browser?.ExecuteChromeCommand(Cef.MapChromeCommandNameToId("IDC_TASK_MANAGER"), WindowOpenDisposition.CurrentTab);
+        }
+
+        public void Cut()
+        {
+            if (Browser.IsBrowserInitialized)
+                Browser?.Cut();
+        }
+
+        public void Copy()
+        {
+            if (Browser.IsBrowserInitialized)
+                Browser?.Copy();
+        }
+
+        public void Paste()
+        {
+            if (Browser.IsBrowserInitialized)
+                Browser?.Paste();
+        }
+
+        public void Delete()
+        {
+            if (Browser.IsBrowserInitialized)
+                Browser?.Delete();
+        }
+
+        public void SelectAll()
+        {
+            if (Browser.IsBrowserInitialized)
+                Browser?.SelectAll();
+        }
+
+        public void Undo()
+        {
+            if (Browser.IsBrowserInitialized)
+                Browser?.Undo();
+        }
+
+        public void Redo()
+        {
+            if (Browser.IsBrowserInitialized)
+                Browser?.Redo();
+        }
+
+        public void SetAudioPlaying(bool Playing)
+        {
+            AudioPlaying = Playing;
+            AudioPlayingChanged?.RaiseUIAsync(this);
+        }
+        public event EventHandler AudioPlayingChanged;
+        public event EventHandler<bool> FullscreenChanged;
+        public event EventHandler<ScriptDialogEventArgs> ScriptDialogOpened;
+        public void RaiseScriptDialog(ScriptDialogEventArgs e)
+        {
+            Browser?.Dispatcher.Invoke(() => ScriptDialogOpened?.Invoke(this, e));
+        }
+        public event EventHandler<BeforeNavigationEventArgs> BeforeNavigation;
+        public event EventHandler<NewTabRequestEventArgs> NewTabRequested;
+        public event EventHandler<string> FrameLoadStart;
+        public event EventHandler<string> FrameLoadEnd;
+        public event EventHandler IsBrowserInitializedChanged;
+        public event EventHandler<LoadingStateResult> LoadingStateChanged;
+        public event EventHandler<string> TitleChanged;
+        public event EventHandler<string> StatusMessage;
+        public event EventHandler<string> FaviconChanged;
+        public event EventHandler<string> AddressChanged;
+        public event EventHandler<FindResult> FindResult;
+        public event EventHandler<string> JavaScriptMessageReceived;
+        public event EventHandler<ResourceRequestEventArgs> ResourceRequested;
+        //public event EventHandler<ResourceRespondedResult> ResourceResponded;
+        public event EventHandler<ResponseInterceptedResult> ResponseIntercepted;
+        public event EventHandler<ResourceLoadedResult> ResourceLoaded;
+        public void RaiseResourceRequest(ResourceRequestEventArgs e)
+        {
+            if (InitializingHistory) return;
+            Browser?.Dispatcher.Invoke(() => ResourceRequested?.Invoke(this, e));
+        }
+        /*public void RaiseResourceResponded(ResourceRespondedResult e)
+        {
+            if (InitializingHistory) return;
+            ResourceResponded?.RaiseUIAsync(this, e);
+        }*/
+        public void RaiseResponseIntercepted(ResponseInterceptedResult e)
+        {
+            if (InitializingHistory) return;
+            ResponseIntercepted?.RaiseUIAsync(this, e);
+        }
+        public void RaiseResourceLoaded(ResourceLoadedResult Result)
+        {
+            if (InitializingHistory) return;
+            ResourceLoaded?.RaiseUIAsync(this, Result);
+        }
+        public event EventHandler<PermissionRequestedEventArgs> PermissionRequested;
+        internal void RaisePermissionRequested(PermissionRequestedEventArgs e)
+        {
+            if (InitializingHistory) return;
+            Browser?.Dispatcher.Invoke(() => PermissionRequested?.Invoke(this, e));
+        }
+        public void NotifyNewTabRequested(NewTabRequestEventArgs e) => Browser?.Dispatcher.Invoke(() => NewTabRequested?.Invoke(this, e));
+
+
+        /*public event Action<WebDownloadItem> DownloadStarted;
+        public event Action<WebDownloadItem> DownloadUpdated;
+        public event Action<WebDownloadItem> DownloadCompleted;
+        public void DownloadOnStarted(WebDownloadItem e) => DownloadStarted?.RaiseUIAsync(e);
+        public void DownloadOnUpdated(WebDownloadItem e) => DownloadUpdated?.RaiseUIAsync(e);
+        public void DownloadOnCompleted(WebDownloadItem e) => DownloadCompleted?.RaiseUIAsync(e);*/
+
+        public event EventHandler<WebContextMenuEventArgs> ContextMenuRequested;
+        public void RaiseContextMenu(WebContextMenuEventArgs e) => ContextMenuRequested?.RaiseUIAsync(this, e);
+
+        public event EventHandler<WebAuthenticationRequestedEventArgs> AuthenticationRequested;
+        public event EventHandler<ExternalProtocolEventArgs> ExternalProtocolRequested;
+        internal void RaiseExternalProtocolRequested(ExternalProtocolEventArgs e)
+        {
+            Browser?.Dispatcher.Invoke(() => ExternalProtocolRequested?.Invoke(this, e));
+        }
+        public event EventHandler<NavigationErrorEventArgs> NavigationError;
+
+        public void Download(string Url)
+        {
+            if (Browser.IsBrowserInitialized)
+                Browser?.StartDownload(Url);
+        }
+
+        public void ExecuteScript(string Script)
+        {
+            if (Browser.CanExecuteJavascriptInMainFrame)
+                Browser?.ExecuteScriptAsync(Script);
+        }
+
+        public bool CanExecuteJavascript => Browser.CanExecuteJavascriptInMainFrame;
+        public async Task<object?> EvaluateScriptAsync(string Script)
+        {
+            if (!CanExecuteJavascript)
+                return null;
+            JavascriptResponse Result = await Browser.EvaluateScriptAsync(Script);
+            /*if (!Result.Success)
+                throw new InvalidOperationException(Result.Message);*/
+            return Result.Result;
+        }
+
+        public async Task<byte[]> TakeScreenshotAsync(WebScreenshotFormat Format, Rect? Viewport = null)
+        {
+            if (Viewport == null)
+            {
+                var ContentSize = await Browser.GetContentSizeAsync();
+                Viewport = new Rect(0, 0, ContentSize.Width, ContentSize.Height);
+            }
+            return await Browser.CaptureScreenshotAsync(Format.ToCefScreenshotFormat(), null, new CefSharp.DevTools.Page.Viewport { X = Viewport.Value.X, Y = Viewport.Value.Y, Width = (int)Viewport.Value.Width, Height = (int)Viewport.Value.Height }, true, true);
+        }
+        public async Task<string> GetSourceAsync() => await Browser.GetSourceAsync();
+        public async Task<string> CallDevToolsAsync(string Method, object? Parameters = null)
+        {
+            try
+            {
+                IDictionary<string, object>? Dict = null;
+
+                if (Parameters != null)
+                {
+                    using JsonDocument Document = JsonDocument.Parse(JsonSerializer.Serialize(Parameters, DevToolsSerializer.Value));
+                    Dict = ConvertJsonElement(Document.RootElement) as IDictionary<string, object>;
+                }
+
+                var Response = await Browser.GetDevToolsClient().ExecuteDevToolsMethodAsync(Method, Dict);
+                return Response.ResponseAsJsonString;
+            }
+            catch (Exception _Exception) { return JsonSerializer.Serialize(new { Error = _Exception.Message }); }
+        }
+
+        Lazy<JsonSerializerOptions> DevToolsSerializer = new(() => new()
+        {
+            PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+            DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull
+        });
+
+        private readonly Dictionary<string, List<Action<string>>> DevToolsHandlers = [];
+        public void SubscribeDevToolsEvent(string Event, Action<string> Handler)
+        {
+            if (!DevToolsHandlers.TryGetValue(Event, out var Handlers))
+            {
+                Handlers = [];
+                DevToolsHandlers[Event] = Handlers;
+            }
+            Handlers.Add(Handler);
+        }
+
+        private void DispatchDevToolsEvent(string Event, string Json)
+        {
+            if (DevToolsHandlers.TryGetValue(Event, out var Handlers))
+            {
+                foreach (var Handler in Handlers)
+                    Handler(Json);
+            }
+        }
+
+        public async Task<List<WebNavigationEntry>> GetNavigationHistoryAsync()
+        {
+            List<WebNavigationEntry> History = [];
+            try
+            {
+                string Json = await CallDevToolsAsync("Page.getNavigationHistory");
+                if (!string.IsNullOrWhiteSpace(Json))
+                {
+                    using JsonDocument Document = JsonDocument.Parse(Json);
+                    if (Document.RootElement.TryGetProperty("currentIndex", out var CurrentIndexElement) && Document.RootElement.TryGetProperty("entries", out var Entries))
+                    {
+                        int CurrentIndex = CurrentIndexElement.GetInt32();
+                        for (int i = 0; i < Entries.GetArrayLength(); i++)
+                        {
+                            var CurrentEntry = Entries[i];
+                            //string Url = CurrentEntry.TryGetProperty("url", out var UrlElement) ? UrlElement.GetString() ?? string.Empty : string.Empty;
+                            string UserTypedUrl = CurrentEntry.TryGetProperty("userTypedURL", out var UserTypedElement) ? UserTypedElement.GetString() ?? string.Empty : string.Empty;
+                            string Title = CurrentEntry.TryGetProperty("title", out var TitleElement) ? TitleElement.GetString() ?? string.Empty : string.Empty;
+                            int? ID = CurrentEntry.TryGetProperty("id", out var IDElement) ? IDElement.GetInt32() : null;
+                            History.Add(new WebNavigationEntry(i == CurrentIndex, UserTypedUrl, Title, ID));
+                        }
+                    }
+                }
+            }
+            catch { }
+            if (History.Count == 0)
+                History.Add(new WebNavigationEntry(true, Address, Title, null));
+            return History;
+        }
+
+        public async Task<long?> GetMemoryUsage()
+        {
+            if (!Browser.CanExecuteJavascriptInMainFrame)
+                return null;
+            int? RawProcessId = (int)await EvaluateScriptAsync("engine.renderProcessId");
+            if (RawProcessId == null)
+                return null;
+            using Process _Process = Process.GetProcessById(RawProcessId.Value);
+            _Process.Refresh();
+            return _Process.PrivateMemorySize64;
+        }
+
+        /*public async Task ClearBrowsingDataAsync(WebViewBrowsingDataTypes DataType)
+        {
+            var Context = Browser.GetBrowserHost()?.RequestContext;
+            if (Context == null)
+                return;
+            DevToolsClient DevToolsClient = Browser.GetDevToolsClient();
+            if (DataType == WebViewBrowsingDataTypes.Cookies)
+                Cef.GetGlobalCookieManager()?.DeleteCookies("", "");
+            else if (DataType == WebViewBrowsingDataTypes.DiskCache)
+                await DevToolsClient.Page.ClearCompilationCacheAsync();
+            else if (DataType == WebViewBrowsingDataTypes.Cache)
+                await DevToolsClient.Network.ClearBrowserCacheAsync();
+            else if (DataType == WebViewBrowsingDataTypes.LocalStorage)
+                await DevToolsClient.DOMStorage.();
+        }*/
+        private static object? ConvertJsonElement(JsonElement Element)
+        {
+            switch (Element.ValueKind)
+            {
+                case JsonValueKind.Object:
+                    return Element.EnumerateObject().ToDictionary(_Property => _Property.Name, _Property => ConvertJsonElement(_Property.Value)!);
+                case JsonValueKind.Array:
+                    return Element.EnumerateArray().Select(ConvertJsonElement).ToList();
+                case JsonValueKind.String:
+                    return Element.GetString();
+                case JsonValueKind.Number:
+                    if (Element.TryGetInt64(out var _Int)) return _Int;
+                    if (Element.TryGetDouble(out var _Double)) return _Double;
+                    return Element.GetDecimal();
+                case JsonValueKind.True: return true;
+                case JsonValueKind.False: return false;
+                default: return null;
+            }
+        }
+
+        ChromiumCookieManager CookieManager;
+        public async Task<IWebCookieManager> GetCookieManager()
+        {
+            if (CookieManager == null)
+            {
+                TaskCompletionCallback Callback = new();
+                ICookieManager BaseCookieManager = Browser.GetCookieManager(Callback);
+                await Callback.Task;
+                CookieManager = new ChromiumCookieManager(BaseCookieManager);
+            }
+            return CookieManager;
+        }
+
+        ChromiumPermissionManager PermissionManager;
+        public async Task<IPermissionManager?> GetPermissionManager()
+        {
+            if (!Browser.IsBrowserInitialized)
+                return null;
+            if (PermissionManager == null)
+            {
+                IRequestContext Context = Browser.RequestContext ?? Cef.GetGlobalRequestContext();
+                PermissionManager = new ChromiumPermissionManager(Context);
+            }
+            return PermissionManager;
+        }
+
+        public FrameworkElement Control => Browser;
+
+        private bool _Disposed;
+
+        public void Dispose()
+        {
+            Dispose(true);
+            GC.SuppressFinalize(this);
+        }
+        protected virtual void Dispose(bool Disposing)
+        {
+            if (_Disposed) return;
+            if (Disposing)
+            {
+                WebViewManager.WebViews.Remove(this);
+                WebViewManager.ChromiumWebViews.Remove(Browser);
+
+                //WARNING: Removing these crashes SLBr while switching for some unknown reason
+                /*Browser.IsBrowserInitializedChanged -= Browser_IsBrowserInitializedChanged;
+                Browser.FrameLoadStart -= Browser_FrameLoadStart;
+                Browser.FrameLoadEnd -= Browser_FrameLoadEnd;
+                Browser.LoadingStateChanged -= Browser_LoadingStateChanged;
+                Browser.TitleChanged -= Browser_TitleChanged;
+                Browser.StatusMessage -= Browser_StatusMessage;*/
+
+                Browser.DisplayHandler = null;
+                Browser.LifeSpanHandler = null;
+                Browser.RequestHandler = null;
+                Browser.JsDialogHandler = null;
+                Browser.KeyboardHandler = null;
+                Browser.PermissionHandler = null;
+                Browser.DownloadHandler = null;
+                Browser.MenuHandler = null;
+                Browser.DialogHandler = null;
+                Browser.ResourceRequestHandlerFactory = null;
+
+                if (Browser.Parent is Panel Parent)
+                    Parent.Children.Remove(Browser);
+                Browser.Dispose();
+                Browser = null;
+            }
+            _Disposed = true;
+        }
+
+        #region RequestHandler
+        public bool GetAuthCredentials(IWebBrowser chromiumWebBrowser, IBrowser browser, string originUrl, bool isProxy, string host, int port, string realm, string scheme, IAuthCallback callback)
+        {
+            //if (InitializingHistory) return false;
+            WebAuthenticationRequestedEventArgs Args = new(originUrl);
+            Browser?.Dispatcher.Invoke(() => AuthenticationRequested?.Invoke(this, Args));
+            if (Args.Cancel)
+                callback.Cancel();
+            else
+                callback.Continue(Args.Username, Args.Password);
+            return true;
+        }
+        public bool OnBeforeBrowse(IWebBrowser chromiumWebBrowser, IBrowser browser, IFrame frame, IRequest request, bool userGesture, bool isRedirect)
+        {
+            //if (InitializingHistory) return false;
+            BeforeNavigationEventArgs Args = new(request.Url, frame.IsMain);
+            Browser?.Dispatcher.Invoke(() => BeforeNavigation?.Invoke(this, Args));
+
+            return Args.Cancel;
+        }
+        public bool OnCertificateError(IWebBrowser browserControl, IBrowser browser, CefErrorCode errorCode, string requestUrl, ISslInfo sslInfo, IRequestCallback callback) => true;
+        public bool OnOpenUrlFromTab(IWebBrowser browserControl, IBrowser browser, IFrame frame, string targetUrl, WindowOpenDisposition targetDisposition, bool userGesture)
+        {
+            //if (InitializingHistory) return true;
+            if (targetDisposition == WindowOpenDisposition.NewBackgroundTab)
+            {
+                NotifyNewTabRequested(new NewTabRequestEventArgs(targetUrl, true, null));
+                return true;
+            }
+            return false;
+        }
+        public void OnRenderViewReady(IWebBrowser browserControl, IBrowser browser) { }
+        public IResourceRequestHandler GetResourceRequestHandler(IWebBrowser chromiumWebBrowser, IBrowser browser, IFrame frame, IRequest request, bool isNavigation, bool isDownload, string requestInitiator, ref bool disableDefaultHandling)
+        {
+            if (WebViewManager.OverrideRequests.Keys.Contains(request.Url))
+                return null;
+            return new ChromiumResourceRequestHandler(this);
+        }
+        public void OnDocumentAvailableInMainFrame(IWebBrowser chromiumWebBrowser, IBrowser browser) { }
+        public bool OnSelectClientCertificate(IWebBrowser chromiumWebBrowser, IBrowser browser, bool isProxy, string host, int port, X509Certificate2Collection certificates, ISelectClientCertificateCallback callback)
+        {
+            callback.Dispose();
+            return false;
+        }
+        public void OnRenderProcessTerminated(IWebBrowser chromiumWebBrowser, IBrowser browser, CefTerminationStatus status, int errorCode, string errorMessage) { }
+        #endregion
+
+        #region DisplayHandler
+        public async void OnAddressChanged(IWebBrowser chromiumWebBrowser, AddressChangedEventArgs addressChangedArgs)
+        {
+            if (addressChangedArgs.Address.StartsWith("devtools://"))
+                return;
+            if (CurrentAddress != addressChangedArgs.Address)
+            {
+                CurrentAddress = addressChangedArgs.Address;
+                if (!InitializingHistory)
+                {
+                    AddressChanged?.RaiseUIAsync(this, addressChangedArgs.Address);
+                    NavigationEntry _NavigationEntry = await Browser.GetVisibleNavigationEntryAsync();
+                    LoadingStateChanged?.RaiseUIAsync(this, new LoadingStateResult(IsLoading, _NavigationEntry?.HttpStatusCode));
+                }
+            }
+        }
+        public bool OnAutoResize(IWebBrowser chromiumWebBrowser, IBrowser browser, CefSharp.Structs.Size newSize) => false;
+        public bool OnConsoleMessage(IWebBrowser chromiumWebBrowser, ConsoleMessageEventArgs consoleMessageArgs) => false;
+        public bool OnCursorChange(IWebBrowser chromiumWebBrowser, IBrowser browser, nint cursor, CursorType type, CefSharp.Structs.CursorInfo customCursorInfo) => false;
+        public void OnFaviconUrlChange(IWebBrowser chromiumWebBrowser, IBrowser browser, IList<string> urls)
+        {
+            if (urls.Count != 0)
+            {
+                string Url = urls.OrderBy(url => url.EndsWith(".ico") ? 0 : url.EndsWith(".png") ? 1 : 2).ToList().First();
+                if (Favicon != Url)
+                {
+                    Favicon = Url;
+                    if (!InitializingHistory && !Url.EndsWith(".svg"))
+                        FaviconChanged?.RaiseUIAsync(this, Url);
+                }
+            }
+        }
+        public void OnFullscreenModeChange(IWebBrowser chromiumWebBrowser, IBrowser browser, bool fullscreen)
+        {
+            if (InitializingHistory) return;
+            FullscreenChanged?.RaiseUIAsync(this, fullscreen);
+        }
+        public void OnLoadingProgressChange(IWebBrowser chromiumWebBrowser, IBrowser browser, double progress) { }
+        public void OnStatusMessage(IWebBrowser chromiumWebBrowser, StatusMessageEventArgs statusMessageArgs) { }
+        public void OnTitleChanged(IWebBrowser chromiumWebBrowser, TitleChangedEventArgs titleChangedArgs) { }
+        public bool OnTooltipChanged(IWebBrowser chromiumWebBrowser, ref string text) => false;
+        #endregion
+    }
+
+    public class ChromiumEdgeWebView : IWebView, IDisposable
+    {
+        public WebView2 Browser;
+        private WebViewBrowserSettings Settings;
+        private readonly List<WebNavigationEntry> InitialUrls;
+        public CoreWebView2 BrowserCore;
+
+        public ChromiumEdgeWebView(List<WebNavigationEntry> Urls = null, WebViewBrowserSettings _Settings = null)
+        {
+            InitialUrls = Urls ?? [new(true, "about:blank")];
+            Settings = _Settings ?? new WebViewBrowserSettings();
+            WebViewManager.WebViews.Add(this);
+        }
+
+        public async Task InitializeAsync()
+        {
+            if (!WebViewManager.IsWebView2Initialized)
+                await WebViewManager.InitializeWebView2();
+            Browser = new WebView2();
+            Browser.CoreWebView2InitializationCompleted += Browser_CoreWebView2InitializationCompleted;
+
+            try
+            {
+                Browser.EnsureCoreWebView2Async(WebViewManager.WebView2Environment, Settings.Private ? WebViewManager.WebView2PrivateControllerOptions : WebViewManager.WebView2ControllerOptions);
+            }
+            catch (COMException _COMException) when ((uint)_COMException.HResult == 0x8007139F)
+            {
+                //https://github.com/MicrosoftEdge/WebView2Feedback/issues/3008#issuecomment-1916313157
+                WebViewManager.DeleteWebView2HighDPIRegistry();
+                Browser.EnsureCoreWebView2Async(WebViewManager.WebView2Environment, Settings.Private ? WebViewManager.WebView2PrivateControllerOptions : WebViewManager.WebView2ControllerOptions);
+            }
+            Browser.KeyDown += (s, e) => HotKeyManager.HandleKeyDown(e);
+            ZoomFactor = 1;
+        }
+
+        private async void Browser_CoreWebView2InitializationCompleted(object? sender, CoreWebView2InitializationCompletedEventArgs e)
+        {
+            BrowserCore = Browser.CoreWebView2;
+            Browser.Dispatcher.BeginInvoke(() => IsBrowserInitializedChanged?.Invoke(this, EventArgs.Empty));
+            BrowserCore.Profile.PreferredTrackingPreventionLevel = CoreWebView2TrackingPreventionLevel.Basic;
+            BrowserCore.Profile.PreferredColorScheme = CoreWebView2PreferredColorScheme.Light;
+            if (!Utils.IsEmptyOrWhiteSpace(WebViewManager.RuntimeSettings.DownloadFolderPath))
+                BrowserCore.Profile.DefaultDownloadFolderPath = WebViewManager.RuntimeSettings.DownloadFolderPath;
+            BrowserCore.Settings.AreHostObjectsAllowed = false;
+            BrowserCore.Settings.IsScriptEnabled = Settings.JavaScript;
+            BrowserCore.Settings.IsStatusBarEnabled = false;
+            BrowserCore.Settings.IsZoomControlEnabled = true;
+            BrowserCore.Settings.AreBrowserAcceleratorKeysEnabled = true;
+            BrowserCore.Settings.IsPasswordAutosaveEnabled = false;
+            BrowserCore.Settings.IsSwipeNavigationEnabled = false;
+            BrowserCore.Settings.IsPinchZoomEnabled = false;
+
+            BrowserCore.Settings.IsReputationCheckingRequired = !Settings.Private && App.Instance.WebRiskService != WebSecurityService.None;
+
+            BrowserCore.Settings.IsGeneralAutofillEnabled = false;
+            BrowserCore.Settings.AreDefaultScriptDialogsEnabled = false;
+            //Core.Settings.HiddenPdfToolbarItems = CoreWebView2PdfToolbarItems.Bookmarks;
+            BrowserCore.Settings.IsWebMessageEnabled = Settings.JavaScriptMessage;
+            //WARNING: WebView2 prerelease NuGet package required.
+            if (WebViewManager.Settings.Performance == PerformancePreset.High)
+            {
+                BrowserCore.Settings.PreferredForegroundTimerWakeInterval = TimeSpan.FromMilliseconds(4);
+                BrowserCore.Settings.PreferredBackgroundTimerWakeInterval = TimeSpan.FromMilliseconds(16);
+                BrowserCore.Settings.PreferredIntensiveTimerWakeInterval = TimeSpan.FromMilliseconds(4);
+                BrowserCore.Settings.PreferredOverrideTimerWakeInterval = TimeSpan.Zero;
+            }
+            else if (WebViewManager.Settings.Performance == PerformancePreset.Low)
+            {
+                BrowserCore.Settings.PreferredForegroundTimerWakeInterval = TimeSpan.FromMilliseconds(16);
+                BrowserCore.Settings.PreferredBackgroundTimerWakeInterval = TimeSpan.FromMilliseconds(250);
+                BrowserCore.Settings.PreferredIntensiveTimerWakeInterval = TimeSpan.FromMilliseconds(16);
+                BrowserCore.Settings.PreferredOverrideTimerWakeInterval = TimeSpan.Zero;
+            }
+            BrowserCore.MemoryUsageTargetLevel = WebViewManager.Settings.Performance == PerformancePreset.High ? CoreWebView2MemoryUsageTargetLevel.Normal : CoreWebView2MemoryUsageTargetLevel.Low;
+
+            BrowserCore.IsDefaultDownloadDialogOpenChanged += Core_IsDefaultDownloadDialogOpenChanged;
+
+            BrowserCore.NavigationStarting += Browser_NavigationStarting;
+            BrowserCore.FrameNavigationStarting += Browser_FrameNavigationStarting;
+            BrowserCore.FrameNavigationCompleted += Browser_FrameNavigationCompleted;
+            BrowserCore.NavigationCompleted += Browser_NavigationCompleted;
+            BrowserCore.ServerCertificateErrorDetected += Browser_ServerCertificateErrorDetected;
+
+            BrowserCore.DocumentTitleChanged += Browser_DocumentTitleChanged;
+            BrowserCore.FaviconChanged += Browser_FaviconChanged;
+            BrowserCore.StatusBarTextChanged += (s, e) => StatusMessage?.RaiseUIAsync(this, BrowserCore.StatusBarText);
+
+            BrowserCore.PermissionRequested += Browser_PermissionRequested;
+            BrowserCore.ScriptDialogOpening += Browser_ScriptDialogOpening;
+            BrowserCore.NewWindowRequested += Browser_NewWindowRequested;
+            if (Settings.AudioListener)
+            {
+                BrowserCore.IsDocumentPlayingAudioChanged += (s, e) => AudioPlayingChanged?.RaiseUIAsync(this);
+                BrowserCore.IsMutedChanged += (s, e) => AudioPlayingChanged?.RaiseUIAsync(this);
+            }
+            BrowserCore.ContainsFullScreenElementChanged += (s, e) => FullscreenChanged?.RaiseUIAsync(this, BrowserCore.ContainsFullScreenElement);
+            BrowserCore.AddWebResourceRequestedFilter("https://permanently-removed.invalid/*", CoreWebView2WebResourceContext.All);
+            BrowserCore.WebResourceRequested += Browser_WebStoreResourceRequested;
+            BrowserCore.AddWebResourceRequestedFilter("*", CoreWebView2WebResourceContext.All);
+            BrowserCore.WebResourceRequested += Browser_WebResourceRequested;
+            BrowserCore.WebResourceResponseReceived += Browser_WebResourceResponseReceived;
+
+            BrowserCore.DownloadStarting += Browser_DownloadStarting;
+
+            BrowserCore.ContextMenuRequested += Browser_ContextMenuRequested;
+            BrowserCore.Find.ActiveMatchIndexChanged += (s, e) => FindResult.RaiseUIAsync(this, new FindResult(BrowserCore.Find.ActiveMatchIndex, BrowserCore.Find.MatchCount));
+            BrowserCore.Find.MatchCountChanged += (s, e) => FindResult.RaiseUIAsync(this, new FindResult(BrowserCore.Find.ActiveMatchIndex, BrowserCore.Find.MatchCount));
+            BrowserCore.ProcessFailed += ProcessFailed;
+
+            BrowserCore.BasicAuthenticationRequested += Browser_BasicAuthenticationRequested;
+
+            BrowserCore.LaunchingExternalUriScheme += Browser_LaunchingExternalUriScheme;
+
+            BrowserCore.SourceChanged += Browser_SourceChanged;
+
+            BrowserCore.SaveFileSecurityCheckStarting += Browser_SaveFileSecurityCheckStarting;
+            //BrowserCore.HistoryChanged += Browser_HistoryChanged;
+
+            if (Settings.JavaScriptMessage)
+            {
+                await BrowserCore.AddScriptToExecuteOnDocumentCreatedAsync(Scripts.WebView2DocumentCreatedScript);
+                BrowserCore.WebMessageReceived += Browser_WebMessageReceived;
+            }
+
+#if !DEBUG
+            try
+            {
+#endif
+            bool LastActive = InitialUrls.Last().IsCurrent == true;
+            int CurrentIndex = InitialUrls.IndexOf(InitialUrls.First(i => i.IsCurrent));
+            Visibility PreviousVisible = Browser?.Visibility ?? Visibility.Visible;
+            Browser?.Visibility = Visibility.Hidden;
+            bool MockRequest = false;
+
+            void Browser_MockResourceRequested(object sender, CoreWebView2WebResourceRequestedEventArgs e)
+            {
+                e.Response = BrowserCore.Environment.CreateWebResourceResponse(new MemoryStream(Encoding.UTF8.GetBytes(App.HistoryPlaceholder)), 200, "OK", "Content-Type: text/html");
+            }
+
+            bool ContainsTravelLog = InitialUrls.Count > 1;
+            if (ContainsTravelLog)
+            {
+                BrowserCore.WebResourceRequested -= Browser_WebResourceRequested;
+                BrowserCore.WebResourceRequested += Browser_MockResourceRequested;
+                MockRequest = true;
+            }
+
+            TaskCompletionSource<bool> NavigationTaskCompletion = null;
+            void Browser_MockNavigationCompleted(object sender, CoreWebView2NavigationCompletedEventArgs e)
+            {
+                NavigationTaskCompletion?.TrySetResult(e.IsSuccess);
+            }
+            if (ContainsTravelLog)
+                BrowserCore.NavigationCompleted += Browser_MockNavigationCompleted;
+            for (int i = 0; i < InitialUrls.Count; i++)
+            {
+                InitializingHistory = !LastActive || i < InitialUrls.Count - 1;
+                if (!InitializingHistory && MockRequest)
+                {
+                    BrowserCore.WebResourceRequested += Browser_WebResourceRequested;
+                    BrowserCore.WebResourceRequested -= Browser_MockResourceRequested;
+                    MockRequest = false;
+                }
+                if (ContainsTravelLog)
+                    NavigationTaskCompletion = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+
+                BrowserCore.Navigate(InitialUrls[i].Url);
+
+                if (ContainsTravelLog)
+                    await NavigationTaskCompletion.Task;
+            }
+            if (ContainsTravelLog)
+                BrowserCore.NavigationCompleted -= Browser_MockNavigationCompleted;
+            Browser?.Visibility = PreviousVisible;
+            if (MockRequest)
+            {
+                BrowserCore.WebResourceRequested += Browser_WebResourceRequested;
+                BrowserCore.WebResourceRequested -= Browser_MockResourceRequested;
+                MockRequest = false;
+            }
+            InitializingHistory = false;
+            if (!LastActive)
+            {
+                await Task.Yield();
+
+                List<WebNavigationEntry> History = await GetNavigationHistoryAsync();
+                if (CurrentIndex < History.Count - 1)
+                {
+                    WebNavigationEntry SelectedHistory = History[CurrentIndex];
+                    await CallDevToolsAsync("Page.navigateToHistoryEntry", new
+                    {
+                        entryId = SelectedHistory.ID
+                    });
+                }
+            }
+#if !DEBUG
+            }
+            catch { }
+#endif
+        }
+
+        //NOTE: Disabled in favour of SLBr download risk handler.
+        private void Browser_SaveFileSecurityCheckStarting(object? sender, CoreWebView2SaveFileSecurityCheckStartingEventArgs e)
+        {
+            //e.CancelSave = false;
+            e.SuppressDefaultPolicy = true;
+        }
+
+        private async void Browser_WebMessageReceived(object? sender, CoreWebView2WebMessageReceivedEventArgs e)
+        {
+            string Json = e.WebMessageAsJson;
+            if (Json.StartsWith(@"{""type"":""__edge_tab__"""))
+            {
+                bool IsBackground = Json.EndsWith(@"""background"":1}");
+                if (PendingRequests.Count > 0)
+                {
+                    PendingTabRequest Pending = PendingRequests.Dequeue();
+                    if (!Pending.IsHandled)
+                    {
+                        Pending.IsHandled = true;
+                        await NewWindow(Pending.Args, IsBackground, null);
+                        try { Pending.Deferral.Complete(); } catch { }
+                    }
+                }
+                else
+                {
+                    LastTabIntentBackground = IsBackground;
+                    _ = Task.Delay(200).ContinueWith(_ => LastTabIntentBackground = null, TaskContinuationOptions.ExecuteSynchronously);
+                }
+                return;
+            }
+            JavaScriptMessageReceived?.RaiseUIAsync(this, Json);
+        }
+
+        private Queue<PendingTabRequest> PendingRequests = [];
+        private bool? LastTabIntentBackground = null;
+
+        public class PendingTabRequest
+        {
+            public CoreWebView2NewWindowRequestedEventArgs Args { get; set; }
+            public CoreWebView2Deferral Deferral { get; set; }
+            public bool IsHandled { get; set; } = false;
+        }
+
+        /*private void Browser_HistoryChanged(object? sender, object e)
+        {
+            CurrentAddress = Browser?.Source?.AbsoluteUri ?? string.Empty;
+            LoadingStateChanged?.RaiseUIAsync(this, new LoadingStateResult(IsLoading, null));
+        }*/
+
+        private void Browser_SourceChanged(object? sender, CoreWebView2SourceChangedEventArgs e)
+        {
+            CurrentAddress = Browser?.Source?.AbsoluteUri ?? string.Empty;
+            if (!InitializingHistory)
+            {
+                AddressChanged?.RaiseUIAsync(this, CurrentAddress);
+                LoadingStateChanged?.RaiseUIAsync(this, new LoadingStateResult(IsLoading, null));
+            }
+            //Investigate e.IsNewDocument;
+        }
+
+        private async void Browser_FaviconChanged(object? sender, object e)
+        {
+            //BrowserCore.GetFaviconAsync(CoreWebView2FaviconImageFormat.Png)
+            //FaviconChanged?.RaiseUIAsync(this, BrowserCore.FaviconUri);
+            try
+            {
+                if (Favicon != BrowserCore.FaviconUri)
+                {
+                    Favicon = BrowserCore.FaviconUri;
+                    if (BrowserCore.FaviconUri.EndsWith(".svg"))
+                    {
+                        string Icon = (await EvaluateScriptAsync(Scripts.GetFaviconScript)).ToString() ?? string.Empty;
+                        if (!string.IsNullOrEmpty(Icon))
+                        {
+                            if (!InitializingHistory)
+                                FaviconChanged?.RaiseUIAsync(this, Icon);
+                        }
+                        else
+                            LocateAlternativeIcon = true;
+                    }
+                    else
+                        FaviconChanged?.RaiseUIAsync(this, BrowserCore.FaviconUri);
+                }
+            }
+            catch { LocateAlternativeIcon = true; }
+        }
+
+        private void Browser_DocumentTitleChanged(object? sender, object e)
+        {
+            if (InitializingHistory) return;
+            TitleChanged?.RaiseUIAsync(this, Title);
+        }
+
+        private void Browser_FrameNavigationCompleted(object? sender, CoreWebView2NavigationCompletedEventArgs e)
+        {
+            if (InitializingHistory) return;
+            FrameLoadEnd?.RaiseUIAsync(this, Address);
+        }
+
+        private void Browser_FrameNavigationStarting(object? sender, CoreWebView2NavigationStartingEventArgs e)
+        {
+            if (InitializingHistory) return;
+            FrameLoadStart?.RaiseUIAsync(this, e.Uri);
+        }
+
+        bool InitializingHistory = false;
+
+        bool EncounteredError = false;
+        private void Browser_ServerCertificateErrorDetected(object? sender, CoreWebView2ServerCertificateErrorDetectedEventArgs e)
+        {
+            //if (InitializingHistory) return;
+            EncounteredError = true;
+            IsSecure = false;
+        }
+
+        private void Core_IsDefaultDownloadDialogOpenChanged(object? sender, object e)
+        {
+            try
+            {
+                if (BrowserCore.IsDefaultDownloadDialogOpen)
+                    BrowserCore.CloseDefaultDownloadDialog();
+            }
+            catch { }
+        }
+
+        private async void ProcessFailed(object? sender, CoreWebView2ProcessFailedEventArgs e)
+        {
+            //string Url = Address;
+            Panel? Parent = null;
+            if (Browser.Parent is Panel _Parent)
+            {
+                Parent = _Parent;
+                Parent.Children.Remove(Browser);
+            }
+            Browser.Dispose();
+            Browser = null;
+            await InitializeAsync();
+            Parent?.Children.Add(Browser);
+        }
+
+        private void Browser_LaunchingExternalUriScheme(object? sender, CoreWebView2LaunchingExternalUriSchemeEventArgs e)
+        {
+            e.Cancel = true;
+            if (InitializingHistory) return;
+            ExternalProtocolEventArgs Args = new(e.Uri, e.InitiatingOrigin);
+            Browser?.Dispatcher.Invoke(() => ExternalProtocolRequested?.Invoke(this, Args));
+            if (Args.Launch)
+            {
+                Process.Start(new ProcessStartInfo
+                {
+                    FileName = e.Uri,
+                    UseShellExecute = true
+                });
+            }
+        }
+
+        private void Browser_BasicAuthenticationRequested(object? sender, CoreWebView2BasicAuthenticationRequestedEventArgs e)
+        {
+            if (InitializingHistory)
+            {
+                e.Cancel = true;
+                return;
+            }
+            WebAuthenticationRequestedEventArgs Args = new(e.Uri);
+            Browser?.Dispatcher.Invoke(() => AuthenticationRequested?.Invoke(this, Args));
+            if (Args.Cancel)
+                e.Cancel = true;
+            else
+            {
+                e.Response.UserName = Args.Username;
+                e.Response.Password = Args.Password;
+            }
+        }
+
+        private Dictionary<string, CoreWebView2WebResourceContext> RequestContexts = [];
+
+        private void Browser_ContextMenuRequested(object? sender, CoreWebView2ContextMenuRequestedEventArgs e)
+        {
+            //https://github.com/MicrosoftEdge/WebView2Feedback/pull/5553
+            //TODO: https://github.com/MicrosoftEdge/WebView2Feedback/blob/main/specs/CustomContextMenuSpellcheck.md
+
+            CoreWebView2ContextMenuTarget? Target = e.ContextMenuTarget;
+
+            string LinkText = string.Empty;
+            string LinkUrl = string.Empty;
+            string SelectionText = string.Empty;
+            string SourceUrl = string.Empty;
+            string FrameUrl = string.Empty;
+            try { LinkText = Target.LinkText ?? string.Empty; } catch { }
+            try { LinkUrl = Target.LinkUri ?? string.Empty; } catch { }
+            try { SelectionText = Target.SelectionText ?? string.Empty; } catch { }
+            try { SourceUrl = Target.SourceUri ?? string.Empty; } catch { }
+            try { FrameUrl = Target.FrameUri ?? string.Empty; } catch { }
+            
+            e.MenuItems?.Clear();
+            e.Handled = true;
+
+            var args = new WebContextMenuEventArgs
+            {
+                X = e.Location.X,
+                Y = e.Location.Y,
+                LinkUrl = LinkUrl,
+                LinkText = LinkText,
+                SelectionText = SelectionText,
+                IsEditable = Target?.IsEditable ?? false,
+                DictionarySuggestions = [],
+                //MisspelledWord = string.Empty,
+                SourceUrl = SourceUrl,
+                FrameUrl = FrameUrl,
+                //SpellCheck = false,
+                MediaType = Target?.Kind.ToWebContextMenuMediaType() ?? WebContextMenuMediaType.None,
+                MenuType = Target?.MapWebContextMenuTarget() ?? WebContextMenuType.Page
+            };
+
+            ContextMenuRequested?.RaiseUIAsync(this, args);
+        }
+
+        private void Browser_WebStoreResourceRequested(object? sender, CoreWebView2WebResourceRequestedEventArgs e)
+        {
+            //NOTE: I genuinely cannot believe that the functionality of web store extension installation within WebView2 could be fully restored with such a mundane workaround. Please, accept my sincere gratitude, Microsoft.
+            string OriginalUrl = e.Request.Uri;
+            if (OriginalUrl.StartsWith("https://permanently-removed.invalid/", StringComparison.OrdinalIgnoreCase))
+            {
+                string Referer = string.Empty;
+                foreach (KeyValuePair<string, string> Header in e.Request.Headers)
+                {
+                    if (Header.Key.Equals("Referer", StringComparison.OrdinalIgnoreCase))
+                    {
+                        Referer = Header.Value;
+                        break;
+                    }
+                }
+                if (Referer.StartsWith("https://chromewebstore.google.com/", StringComparison.OrdinalIgnoreCase))
+                {
+                    string[] Split = OriginalUrl.Split('?');
+                    string Query = Split.Length > 1 ? Split[1] : "";
+                    string RedirectUrl = $"https://clients2.google.com/service/update2/crx?{Query}";
+                    e.Response = BrowserCore.Environment.CreateWebResourceResponse(null, 307, "Temporary Redirect", $"Location: {RedirectUrl}");
+                }
+            }
+        }
+
+        private CancellationTokenSource? NavigationCancellationTokenSource;
+        private long NavigationID = 0;
+
+        private HashSet<string> InterceptList = [];
+
+        private void Browser_WebResourceRequested(object? sender, CoreWebView2WebResourceRequestedEventArgs e)
+        {
+            //TODO: Set Content-Length.
+            ProtocolResponse OverrideResponse = WebViewManager.OverrideHandler(e.Request.Uri);
+            if (OverrideResponse != null)
+            {
+                EncounteredError = true;
+                e.Response = BrowserCore?.Environment.CreateWebResourceResponse(new MemoryStream(OverrideResponse.Data), 200, "OK", $"Access-Control-Allow-Origin: *\r\nContent-Type: {OverrideResponse.MimeType}\r\nContent-Length: {OverrideResponse.Data.Length}");
+                return;
+            }
+            if (!RequestContexts.ContainsKey(e.Request.Uri))
+                RequestContexts[e.Request.Uri] = e.ResourceContext;
+
+            Dictionary<string, string> Headers = new(StringComparer.OrdinalIgnoreCase);
+            foreach (var Header in e.Request.Headers)
+                Headers[Header.Key] = Header.Value;
+            ResourceRequestEventArgs Args = new(e.Request.Uri, Address, e.Request.Method, e.ResourceContext.ToResourceRequestType(), Headers);
+            ResourceRequested?.Invoke(this, Args);
+            //NOTE: Ad block testers misinterpret blocked requests as successful, due to the lack of invalid "(canceled)" responses
+            //Ad block functionality remain consistent for all intents and purposes.
+            if (Args.Cancel)
+                e.Response = BrowserCore.Environment.CreateWebResourceResponse(Stream.Null, 403, "Forbidden", "Access-Control-Allow-Origin: *\r\nContent-Type: text/plain\r\nContent-Length: 0");
+            else
+            {
+                if (Args.ModifiedHeaders != null && Args.ModifiedHeaders.Count != 0)
+                {
+                    foreach (var Header in Args.ModifiedHeaders)
+                    {
+                        try
+                        {
+                            e.Request.Headers.SetHeader(Header.Key, Header.Value);
+                        }
+                        catch { }
+                    }
+                }
+                if (Args.Intercept)
+                    InterceptList.Add(Args.Url);
+                if (Args.Response != null)
+                {
+                    if (Args.Response.Content.CanSeek)
+                        Args.Response.Content.Position = 0;
+                    int StatusCode = Args.Response.StatusCode ?? 200;
+
+                    StringBuilder HeadersBuilder = new();
+                    bool HasAllowOrigin = false;
+                    bool HasContentType = false;
+                    bool HasContentLength = false;
+                    if (Args.Response.Headers.IsValueCreated && Args.Response.Headers.Value.Count != 0)
+                    {
+                        foreach (var Header in Args.Response.Headers.Value)
+                        {
+                            HeadersBuilder.Append($"{Header.Key}: {Header.Value}\r\n");
+                            if (!HasAllowOrigin && Header.Key.Equals("Access-Control-Allow-Origin", StringComparison.OrdinalIgnoreCase))
+                                HasAllowOrigin = true;
+                            if (!HasContentType && Header.Key.Equals("Content-Type", StringComparison.OrdinalIgnoreCase))
+                                HasContentType = true;
+                            if (!HasContentLength && Header.Key.Equals("Content-Length", StringComparison.OrdinalIgnoreCase))
+                                HasContentLength = true;
+                        }
+                    }
+                    if (!HasAllowOrigin)
+                        HeadersBuilder.Append("Access-Control-Allow-Origin: *\r\n");
+                    if (!HasContentType)
+                        HeadersBuilder.Append($"Content-Type: {Args.Response.MimeType}\r\n");
+                    if (!HasContentLength)
+                        HeadersBuilder.Append($"Content-Length: {Args.Response.Content.Length}\r\n");
+
+                    e.Response = BrowserCore.Environment.CreateWebResourceResponse(Args.Response.Content, StatusCode, StatusCode == 200 ? "OK" : "Reason Unknown", HeadersBuilder.ToString());
+                }
+                if (Utils.IsCustomScheme(e.Request.Uri) && Utils.IsCustomScheme(Address))
+                    _ = HandleWebResourceRequestedAsync(e, e.GetDeferral());
+            }
+        }
+
+        private async Task HandleWebResourceRequestedAsync(CoreWebView2WebResourceRequestedEventArgs e, CoreWebView2Deferral Deferral)
+        {
+            long NavigationIDSnapshot = NavigationID;
+            CancellationToken Token = NavigationCancellationTokenSource?.Token ?? CancellationToken.None;
+            try
+            {
+                if (WebViewManager.Settings.Schemes.TryGetValue(Utils.GetScheme(e.Request.Uri), out var Handler))
+                {
+                    ProtocolResponse Response;
+
+                    try
+                    {
+                        Response = await Handler(e.Request.Uri, Settings.Private.ToInt().ToString(), Token);
+                    }
+                    catch (OperationCanceledException) { return; }
+                    if (NavigationIDSnapshot != NavigationID || Token.IsCancellationRequested)
+                        return;
+                    e.Response = BrowserCore?.Environment.CreateWebResourceResponse(new MemoryStream(Response.Data), Response.StatusCode, "OK", $"Content-Type: {Response.MimeType}");
+                    if (Response.ErrorCode != WebErrorCode.None)
+                        NavigationError?.RaiseUIAsync(this, new NavigationErrorEventArgs(Response.ErrorCode, string.Empty, e.Request.Uri));
+                }
+            }
+            finally
+            {
+                Deferral.Complete();
+            }
+        }
+
+        private void Browser_WebResourceResponseReceived(object? sender, CoreWebView2WebResourceResponseReceivedEventArgs e)
+        {
+            if (InitializingHistory) return;
+            //TODO: Merge InterceptList & RequestContexts.
+            if (!RequestContexts.TryGetValue(e.Request.Uri, out CoreWebView2WebResourceContext ResourceContext))
+                ResourceContext = CoreWebView2WebResourceContext.Other;
+            ResourceRequestType Type = ResourceContext.ToResourceRequestType();
+            //ResourceResponded?.RaiseUIAsync(this, new ResourceRespondedResult(e.Request.Uri, Type));
+            if (ResourceLoaded != null)
+            {
+                try
+                {
+                    if (e.Response.Headers.Contains("Content-Length"))
+                    {
+                        if (long.TryParse(e.Response.Headers.GetHeader("Content-Length"), out long ContentLength))
+                            ResourceLoaded?.RaiseUIAsync(this, new ResourceLoadedResult(e.Request.Uri, true, ContentLength, ResourceContext.ToResourceRequestType()));
+                    }
+                }
+                catch { }
+            }
+            if (InterceptList.Contains(e.Request.Uri))
+            {
+                InterceptList.Remove(e.Request.Uri);
+                ResponseInterceptedResult InterceptedResult = new(e.Request.Uri, Type, e.Response.StatusCode,
+                    async (Action) =>
+                    {
+                        using Stream _Stream = await e.Response.GetContentAsync();
+                        if (_Stream != null)
+                            await Action(_Stream);
+                    });
+                ResponseIntercepted?.Invoke(this, InterceptedResult);
+            }
+            RequestContexts.Remove(e.Request.Uri);
+        }
+
+        private void Browser_DownloadStarting(object? sender, CoreWebView2DownloadStartingEventArgs e)
+        {
+            e.Handled = true;
+            string SuggestedFileName = Path.GetFileName(e.ResultFilePath);
+            string PreferredPath = Path.Combine(WebViewManager.RuntimeSettings.DownloadFolderPath, SuggestedFileName);
+            if (WebViewManager.RuntimeSettings.DownloadPrompt)
+            {
+                SaveFileDialog SaveDialog = new()
+                {
+                    FileName = SuggestedFileName,
+                    InitialDirectory = WebViewManager.RuntimeSettings.DownloadFolderPath,
+                    Filter = "All Files (*.*)|*.*"
+                };
+                if (SaveDialog.ShowDialog() == true)
+                    PreferredPath = SaveDialog.FileName;
+                else
+                {
+                    e.Cancel = true;
+                    Browser_SourceChanged(null, null);
+                    return;
+                }
+            }
+            string TempPath;
+            if (Path.GetExtension(PreferredPath) == ".crx")
+                TempPath = PreferredPath;
+            else
+                TempPath = PreferredPath + ".part";
+
+            e.ResultFilePath = TempPath;
+            WebDownloadItem Item = new()
+            {
+                Engine = WebEngineType.ChromiumEdge,
+                ID = Guid.NewGuid().ToString(),
+                Url = e.DownloadOperation.Uri,
+                FileName = Path.GetFileName(PreferredPath),
+                FullPath = PreferredPath,
+                TempPath = TempPath,
+                TotalBytes = (long)(e.DownloadOperation.TotalBytesToReceive ?? 0),
+                State = WebDownloadState.InProgress,
+                Pause = e.DownloadOperation.Pause,
+                Resume = () =>
+                {
+                    if (e.DownloadOperation.CanResume)
+                        e.DownloadOperation.Resume();
+                },
+                Cancel = e.DownloadOperation.Cancel,
+                Interruptible = true
+            };
+
+            WebViewManager.DownloadManager.Started(Item);
+            e.DownloadOperation.EstimatedEndTimeChanged += (s2, e2) =>
+            {
+                Item.EndTime = e.DownloadOperation.EstimatedEndTime;
+                WebViewManager.DownloadManager.Updated(Item);
+                //Debug.WriteLine($"EstimatedEndTimeChanged: {e.DownloadOperation.State} {e.DownloadOperation.BytesReceived} {e.DownloadOperation.InterruptReason} {e.DownloadOperation.TotalBytesToReceive}");
+
+                /*if (e.DownloadOperation.TotalBytesToReceive.HasValue && e.DownloadOperation.State == CoreWebView2DownloadState.InProgress && e.DownloadOperation.BytesReceived == (long)e.DownloadOperation.TotalBytesToReceive.Value)
+                {
+                    e.DownloadOperation.Cancel();
+                    Item.State = WebDownloadState.Canceled;
+                    WebViewManager.DownloadManager.Completed(Item);
+                }*/
+            };
+            e.DownloadOperation.BytesReceivedChanged += (s2, e2) =>
+            {
+                Item.ReceivedBytes = e.DownloadOperation.BytesReceived;
+                Item.TotalBytes = (long)(e.DownloadOperation.TotalBytesToReceive ?? 0);
+                WebViewManager.DownloadManager.Updated(Item);
+                //Debug.WriteLine($"BytesReceivedChanged: {e.DownloadOperation.State} {e.DownloadOperation.BytesReceived} {e.DownloadOperation.InterruptReason} {e.DownloadOperation.TotalBytesToReceive}");
+                
+                /*if (e.DownloadOperation.TotalBytesToReceive.HasValue && e.DownloadOperation.State == CoreWebView2DownloadState.InProgress && e.DownloadOperation.BytesReceived == (long)e.DownloadOperation.TotalBytesToReceive.Value)
+                {
+                    e.DownloadOperation.Cancel();
+                    Item.State = WebDownloadState.Canceled;
+                    WebViewManager.DownloadManager.Completed(Item);
+                }*/
+            };
+            //TODO: Incomplete download observed, https://www.thinkbroadband.com/download, "can't be downloaded securely" observed in Edge.
+            e.DownloadOperation.StateChanged += (s2, e2) =>
+            {
+                switch (e.DownloadOperation.State)
+                {
+                    case CoreWebView2DownloadState.Completed:
+                        Item.State = WebDownloadState.Completed;
+                        WebViewManager.DownloadManager.Completed(Item);
+                        break;
+                    case CoreWebView2DownloadState.Interrupted:
+                        if (e.DownloadOperation.InterruptReason == CoreWebView2DownloadInterruptReason.UserPaused)
+                        {
+                            Item.State = WebDownloadState.Paused;
+                            WebViewManager.DownloadManager.Updated(Item);
+                        }
+                        else if (e.DownloadOperation.InterruptReason == CoreWebView2DownloadInterruptReason.UserCanceled)
+                        {
+                            Item.State = WebDownloadState.Canceled;
+                            WebViewManager.DownloadManager.Completed(Item);
+                        }
+                        else
+                        {
+                            //TODO: WebView2 does not deliver interrupt reason on network disconnection.
+                            Item.State = WebDownloadState.Interrupted;
+                            Item.InterruptReason = e.DownloadOperation.InterruptReason.ToWebDownloadInterruptReason();
+                            WebViewManager.DownloadManager.Updated(Item);
+                        }
+                        break;
+                    case CoreWebView2DownloadState.InProgress:
+                        Item.State = WebDownloadState.InProgress;
+                        WebViewManager.DownloadManager.Updated(Item);
+                        break;
+                }
+            };
+
+            Browser_SourceChanged(null, null);
+        }
+
+        private void Browser_PermissionRequested(object? sender, CoreWebView2PermissionRequestedEventArgs e)
+        {
+            var Args = new PermissionRequestedEventArgs(Address, e.PermissionKind.ToWebPermission());
+            Browser?.Dispatcher.Invoke(() => { PermissionRequested?.Invoke(this, Args); });
+            e.State = Args.State.ToWebView2PermissionState();
+            e.Handled = true;
+        }
+
+        private void Browser_NavigationStarting(object? sender, CoreWebView2NavigationStartingEventArgs e)
+        {
+            Favicon = string.Empty;
+            CurrentAddress = e.Uri;
+            if (InitializingHistory) return;
+            FaviconChanged?.RaiseUIAsync(this, Favicon);
+            BeforeNavigationEventArgs Args = new(e.Uri, true);
+            Browser?.Dispatcher.Invoke(() => BeforeNavigation?.Invoke(this, Args));
+            if (Args.Cancel)
+            {
+                e.Cancel = true;
+                return;
+            }
+            if (!WebViewManager.RuntimeSettings.PDFViewer && Utils.GetFileExtension(e.Uri) == ".pdf")
+            {
+                e.Cancel = true;
+                Browser?.Dispatcher.BeginInvoke(() => WebViewManager.DownloadManager.StartDownloadAsync(e.Uri, null, WebViewManager.RuntimeSettings.DownloadPrompt, "PDF File (*.pdf)|*.pdf"));
+                return;
+            }
+            NavigationCancellationTokenSource?.Cancel();
+            NavigationCancellationTokenSource?.Dispose();
+
+            NavigationCancellationTokenSource = new CancellationTokenSource();
+            Interlocked.Increment(ref NavigationID);
+            IsViewSource = false;
+            IsLoading = true;
+            LoadingStateChanged?.RaiseUIAsync(this, new LoadingStateResult(IsLoading, null));
+        }
+
+        public Task<CoreWebView2> WaitForCoreWebView2Async()
+        {
+            TaskCompletionSource<CoreWebView2> TaskSource = new();
+            if (BrowserCore != null)
+                TaskSource.TrySetResult(BrowserCore);
+            else
+            {
+                void WaitHandler(object? s, EventArgs e)
+                {
+                    IsBrowserInitializedChanged -= WaitHandler;
+                    if (BrowserCore != null)
+                        TaskSource.TrySetResult(BrowserCore);
+                    else
+                        TaskSource.TrySetResult(null);
+                }
+                IsBrowserInitializedChanged += WaitHandler;
+            }
+
+            return TaskSource.Task;
+        }
+
+        /*private void Browser_NewWindowRequested(object? sender, CoreWebView2NewWindowRequestedEventArgs e)
+        {
+            Rect? Popup = null;
+            if (e.WindowFeatures.HasSize || e.WindowFeatures.HasPosition)
+                Popup = new Rect(e.WindowFeatures.Left, e.WindowFeatures.Top, e.WindowFeatures.Width, e.WindowFeatures.Height);
+            //MessageBox.Show($"{e.WindowFeatures.Left}, {e.WindowFeatures.Top}, {e.WindowFeatures.Width}, {e.WindowFeatures.Height}");
+            var Args = new NewTabRequestEventArgs(e.Uri, false, Popup);
+            Browser?.Dispatcher.Invoke(() => NewTabRequested?.Invoke(this, Args));
+            if (Args.WebView is ChromiumEdgeWebView EdgeWebView)
+                e.NewWindow = ((WebView2)EdgeWebView.Control).CoreWebView2;
+            e.Handled = true;
+        }*/
+
+        private void Browser_NewWindowRequested(object? sender, CoreWebView2NewWindowRequestedEventArgs e)
+        {
+            _ = HandleNewWindowAsync(e, e.GetDeferral());
+        }
+
+        private async Task NewWindow(CoreWebView2NewWindowRequestedEventArgs e, bool Background, Rect? Popup)
+        {
+            var Args = new NewTabRequestEventArgs(e.Uri, Background, Popup);
+            Browser?.Dispatcher.Invoke(() => NewTabRequested?.Invoke(this, Args));
+            if (Args.WebView is ChromiumEdgeWebView EdgeWebView)
+            {
+                await EdgeWebView.WaitForCoreWebView2Async();
+                e.NewWindow = EdgeWebView.BrowserCore;
+            }
+        }
+
+        private async Task HandleNewWindowAsync(CoreWebView2NewWindowRequestedEventArgs e, CoreWebView2Deferral Deferral)
+        {
+            e.Handled = true;
+            //TODO: Fix PiP popups.
+            //MessageBox.Show($"{e.WindowFeatures.ShouldDisplayStatus} {e.WindowFeatures.ShouldDisplayToolbar} {e.WindowFeatures.ShouldDisplayMenuBar} {e.WindowFeatures.ShouldDisplayScrollBars}");
+            try
+            {
+                Rect? Popup = null;
+                if (e.WindowFeatures.HasSize || e.WindowFeatures.HasPosition)
+                    Popup = new Rect(e.WindowFeatures.Left, e.WindowFeatures.Top, e.WindowFeatures.Width, e.WindowFeatures.Height);
+                if (Popup != null)
+                {
+                    await NewWindow(e, false, Popup);
+                    Deferral.Complete();
+                }
+                else
+                {
+                    if (LastTabIntentBackground.HasValue)
+                    {
+                        await NewWindow(e, LastTabIntentBackground.Value, Popup);
+                        LastTabIntentBackground = null;
+                        Deferral.Complete();
+                    }
+                    else
+                    {
+                        PendingTabRequest Request = new() { Args = e, Deferral = Deferral };
+                        PendingRequests.Enqueue(Request);
+                        _ = NewWindowTimeoutFallback(Request, Popup);
+                    }
+                }
+            }
+            finally
+            {
+                try { Deferral.Complete(); } catch { }
+            }
+        }
+
+        private async Task NewWindowTimeoutFallback(PendingTabRequest Request, Rect? popup)
+        {
+            try
+            {
+                await Task.Delay(400);
+                await Application.Current.Dispatcher.InvokeAsync(async () =>
+                {
+                    if (!Request.IsHandled)
+                    {
+                        Request.IsHandled = true;
+                        await NewWindow(Request.Args, false, popup);
+                        try { Request.Deferral.Complete(); } catch { }
+                    }
+                });
+            }
+            catch { }
+        }
+
+        private void Browser_ScriptDialogOpening(object? sender, CoreWebView2ScriptDialogOpeningEventArgs e)
+        {
+            ScriptDialogEventArgs Args = new(e.Kind.ToScriptDialogType(), e.Uri, e.Message, e.DefaultText);
+            Browser?.Dispatcher.Invoke(() => { ScriptDialogOpened?.Invoke(this, Args); });
+            if (Args.Result)
+            {
+                e.Accept();
+                if (!string.IsNullOrEmpty(Args.PromptResult))
+                    e.ResultText = Args.PromptResult;
+            }
+        }
+
+        bool LocateAlternativeIcon = false;
+        private async void Browser_NavigationCompleted(object? sender, CoreWebView2NavigationCompletedEventArgs e)
+        {
+            if (InitializingHistory) return;
+            IsLoading = false;
+            IsSecure = false;
+
+            if (!e.IsSuccess && e.WebErrorStatus != CoreWebView2WebErrorStatus.ConnectionAborted)
+            {
+                //EncounteredError = true;
+                NavigationError?.RaiseUIAsync(this, new NavigationErrorEventArgs(e.WebErrorStatus.ToWebErrorCode(), e.WebErrorStatus.ToString(), Address));
+            }
+
+            try
+            {
+                if (BrowserCore.Source.StartsWith("https:"))
+                    IsSecure = !EncounteredError;
+            }
+            catch { }
+            EncounteredError = false;
+            IsViewSource = await DetectViewSource();
+            LoadingStateChanged?.RaiseUIAsync(this, new LoadingStateResult(IsLoading, e.HttpStatusCode));
+            if (LocateAlternativeIcon)
+            {
+                LocateAlternativeIcon = false;
+                try
+                {
+                    string Icon = (await EvaluateScriptAsync(Scripts.GetFaviconScript)).ToString() ?? string.Empty;
+                    if (Favicon != Icon)
+                    {
+                        Favicon = Icon;
+                        if (!string.IsNullOrEmpty(Icon))
+                            FaviconChanged?.RaiseUIAsync(this, Icon);
+                    }
+                }
+                catch { }
+            }
+            /*IReadOnlyList<CoreWebView2PermissionSetting> CorePermissionList = await BrowserCore.Profile.GetNonDefaultPermissionSettingsAsync();
+            foreach (CoreWebView2PermissionSetting Setting in CorePermissionList)
+            {
+                Debug.WriteLine($"{Setting.PermissionKind} {Setting.PermissionState} {Setting.PermissionOrigin}");
+            }*/
+        }
+
+        public async Task<bool> DetectViewSource()
+        {
+            try
+            {
+                string Json = await CallDevToolsAsync("Page.getNavigationHistory");
+                if (string.IsNullOrWhiteSpace(Json))
+                    return false;
+                using JsonDocument Document = JsonDocument.Parse(Json);
+                if (!Document.RootElement.TryGetProperty("currentIndex", out var CurrentIndexElement))
+                    return false;
+                if (!Document.RootElement.TryGetProperty("entries", out var Entries))
+                    return false;
+                int CurrentIndex = CurrentIndexElement.GetInt32();
+                if (CurrentIndex < 0 || CurrentIndex >= Entries.GetArrayLength())
+                    return false;
+                var CurrentEntry = Entries[CurrentIndex];
+                if (!CurrentEntry.TryGetProperty("userTypedURL", out var UserTyped))
+                    return false;
+                if (!(UserTyped.GetString() ?? string.Empty).StartsWith("view-source:", StringComparison.OrdinalIgnoreCase))
+                    return false;
+                if (CurrentEntry.TryGetProperty("title", out var Title))
+                {
+                    if (!string.IsNullOrEmpty(Title.GetString() ?? string.Empty))
+                        return false;
+                }
+                return true;
+            }
+            catch { return false; }
+        }
+
+        public WebEngineType Engine => WebEngineType.ChromiumEdge;
+        private string CurrentAddress;
+        public string Address
+        {
+            get => (IsViewSource ? "view-source:" : string.Empty) + (Browser.Source != null ? CurrentAddress : InitialUrls.Last().Url);
+            set => Navigate(value);
+        }
+        public string Title
+        {
+            get
+            {
+                if (BrowserCore == null)
+                    return string.Empty;
+                try { return BrowserCore.DocumentTitle; }
+                catch { return string.Empty; }
+            }
+        }
+        public string Favicon { get; private set; } = string.Empty;
+
+        public bool CanGoBack => Browser.CanGoBack;
+        public bool CanGoForward => Browser.CanGoForward;
+        public bool CanReload => !IsLoading;
+        public bool IsLoading { get; private set; }
+        public bool IsBrowserInitialized => BrowserCore != null;
+
+        public bool IsSecure { get; private set; }
+        public bool AudioPlaying
+        {
+            get
+            {
+                if (BrowserCore == null)
+                    return false;
+                try { return BrowserCore.IsDocumentPlayingAudio; }
+                catch { return false; }
+            }
+        }
+        public bool IsMuted
+        {
+            get
+            {
+                if (BrowserCore == null)
+                    return false;
+                try { return BrowserCore.IsMuted; }
+                catch { return false; }
+            }
+            set
+            {
+                if (BrowserCore == null)
+                    return;
+                try { BrowserCore.IsMuted = value; }
+                catch { }
+            }
+        }
+        public double ZoomFactor
+        {
+            get => Browser.ZoomFactor;
+            set => Browser.ZoomFactor = value;
+        }
+
+        bool IsViewSource;
+
+        public void Navigate(string Url) { try { BrowserCore?.Navigate(Url); } catch { } }
+        public void Back() { if (CanGoBack) Browser?.GoBack(); }
+        public void Forward() { if (CanGoForward) Browser?.GoForward(); }
+
+        public void Refresh(bool IgnoreCache = false, bool ClearCache = false)
+        {
+            /*Browser.CoreWebView2.Profile.ClearBrowsingDataAsync(
+    CoreWebView2BrowsingDataKinds.Cookies | CoreWebView2BrowsingDataKinds.CacheStorage
+);*/
+            try
+            {
+                if (ClearCache)
+                    BrowserCore?.Profile.ClearBrowsingDataAsync(CoreWebView2BrowsingDataKinds.DiskCache);
+            }
+            catch { }
+            Browser?.Reload();
+        }
+        public void Stop() => Browser.Stop();
+        public void Print()
+        {
+            try
+            {
+                BrowserCore?.ShowPrintUI();
+            }
+            catch { }
+        }
+
+        public void Find(string Text, bool Forward, bool MatchCase, bool FindNext)
+        {
+            try
+            {
+                WebViewManager.WebView2FindOptions.IsCaseSensitive = MatchCase;
+                WebViewManager.WebView2FindOptions.FindTerm = Text;
+                BrowserCore?.Find?.StartAsync(WebViewManager.WebView2FindOptions);
+                if (FindNext)
+                {
+                    if (Forward)
+                        BrowserCore?.Find?.FindNext();
+                    else
+                        BrowserCore?.Find?.FindPrevious();
+                }
+            }
+            catch { }
+        }
+        public void StopFind()
+        {
+            try
+            {
+                BrowserCore?.Find?.Stop();
+            }
+            catch { }
+        }
+        public void SaveAs()
+        {
+            try
+            {
+                BrowserCore?.ShowSaveAsUIAsync();
+            }
+            catch { }
+        }
+        public void OpenTaskManager()
+        {
+            try
+            {
+                BrowserCore?.OpenTaskManagerWindow();
+            }
+            catch { }
+        }
+
+        public void Cut() => ExecuteScript("document.execCommand('cut');");
+        public void Copy() => ExecuteScript("document.execCommand('copy');");
+        public void Paste() => ExecuteScript("document.execCommand('paste');");
+        public void Delete() => ExecuteScript("document.execCommand('delete');");
+        public void SelectAll() => ExecuteScript("document.execCommand('selectAll');");
+        public void Undo() => ExecuteScript("document.execCommand('undo');");
+        public void Redo() => ExecuteScript("document.execCommand('redo');");
+
+        public event EventHandler AudioPlayingChanged;
+        public event EventHandler<bool> FullscreenChanged;
+        public event EventHandler<ScriptDialogEventArgs> ScriptDialogOpened;
+        public event EventHandler<BeforeNavigationEventArgs> BeforeNavigation;
+        public event EventHandler<NewTabRequestEventArgs> NewTabRequested;
+        public event EventHandler<string> FrameLoadStart;
+        public event EventHandler<string> FrameLoadEnd;
+        public event EventHandler IsBrowserInitializedChanged;
+        public event EventHandler<LoadingStateResult> LoadingStateChanged;
+        public event EventHandler<string> TitleChanged;
+        public event EventHandler<string> StatusMessage;
+        public event EventHandler<string> FaviconChanged;
+        public event EventHandler<string> AddressChanged;
+        public event EventHandler<FindResult> FindResult;
+        public event EventHandler<string> JavaScriptMessageReceived;
+        public event EventHandler<ResourceRequestEventArgs> ResourceRequested;
+        //public event EventHandler<ResourceRespondedResult> ResourceResponded;
+        public event EventHandler<ResponseInterceptedResult> ResponseIntercepted;
+        public event EventHandler<ResourceLoadedResult> ResourceLoaded;
+        public event EventHandler<PermissionRequestedEventArgs> PermissionRequested;
+
+        /*public event Action<WebDownloadItem> DownloadStarted;
+        public event Action<WebDownloadItem> DownloadUpdated;
+        public event Action<WebDownloadItem> DownloadCompleted;*/
+
+        public event EventHandler<WebContextMenuEventArgs> ContextMenuRequested;
+        public event EventHandler<WebAuthenticationRequestedEventArgs> AuthenticationRequested;
+        public event EventHandler<ExternalProtocolEventArgs> ExternalProtocolRequested;
+        public event EventHandler<NavigationErrorEventArgs> NavigationError;
+
+        public void Download(string Url) => WebViewManager.DownloadManager.StartDownloadAsync(Url, null, WebViewManager.RuntimeSettings.DownloadPrompt, null);
+
+        public void ExecuteScript(string Script)
+        {
+            if (BrowserCore == null)
+                return;
+            Browser?.ExecuteScriptAsync(Script);
+        }
+        public bool CanExecuteJavascript => BrowserCore != null;
+
+        public async Task<object?> EvaluateScriptAsync(string Script)
+        {
+#if !DEBUG
+            try
+            {
+#endif
+                string Json = await BrowserCore.CallDevToolsProtocolMethodAsync("Runtime.evaluate",
+                    JsonSerializer.Serialize(new
+                    {
+                        expression = Script,
+                        returnByValue = true,
+                        awaitPromise = true
+                    }));
+
+                using JsonDocument Document = JsonDocument.Parse(Json);
+                /*if (Document.RootElement.TryGetProperty("exceptionDetails", out var Exception))
+                {
+                    string Message = Exception.GetProperty("text").GetString();
+                    if (Document.RootElement.TryGetProperty("result", out var ResultElement) && ResultElement.TryGetProperty("description", out var Description))
+                        Message += $" ({Description.GetString()})";
+                    throw new InvalidOperationException(Message);
+                }*/
+
+                if (Document.RootElement.TryGetProperty("result", out var Result) && Result.TryGetProperty("value", out var Value))
+                {
+                    return Value.ValueKind switch
+                    {
+                        JsonValueKind.String => Value.GetString(),
+                        JsonValueKind.Number => Value.TryGetInt64(out var i) ? i : Value.GetDouble(),
+                        JsonValueKind.True => true,
+                        JsonValueKind.False => false,
+                        JsonValueKind.Null => null,
+                        _ => Value.ToString()
+                    };
+                }
+#if !DEBUG
+            }
+            catch { }
+#endif
+            return null;
+        }
+
+        //https://chromedevtools.github.io/devtools-protocol/tot/Page/#method-captureScreenshot
+        public async Task<byte[]> TakeScreenshotAsync(WebScreenshotFormat Format, Rect? Viewport = null)
+        {
+            try
+            {
+                if (Viewport == null)
+                {
+                    string LayoutMetrics = await CallDevToolsAsync("Page.getLayoutMetrics");
+                    using JsonDocument Document = JsonDocument.Parse(LayoutMetrics);
+                    JsonElement ContentSize = Document.RootElement.GetProperty("contentSize");
+                    Viewport = new Rect(0, 0, ContentSize.GetProperty("width").GetInt32(), ContentSize.GetProperty("height").GetInt32());
+                }
+
+                string ImageResult = await CallDevToolsAsync("Page.captureScreenshot", new
+                {
+                    format = Format switch
+                    {
+                        WebScreenshotFormat.PNG => "png",
+                        WebScreenshotFormat.JPEG => "jpeg",
+                        _ => "webp",
+                    },
+                    fromSurface = true,
+                    captureBeyondViewport = true,
+                    clip = new
+                    {
+                        x = Viewport.Value.X,
+                        y = Viewport.Value.Y,
+                        width = Viewport.Value.Width,
+                        height = Viewport.Value.Height,
+                        scale = 1
+                    }
+                });
+
+                using JsonDocument ResultDocument = JsonDocument.Parse(ImageResult);
+                string Base64Data = ResultDocument.RootElement.GetProperty("data").GetString();
+                return Convert.FromBase64String(Base64Data);
+            }
+            catch { }
+            return [];
+        }
+        public async Task<string> GetSourceAsync() => (await EvaluateScriptAsync("document.documentElement.outerHTML")).ToString();
+        public async Task<string> CallDevToolsAsync(string Method, object? Parameters = null)
+        {
+            try
+            {
+                string Json = Parameters != null ? JsonSerializer.Serialize(Parameters, DevToolsSerializer.Value) : "{}";
+                return await BrowserCore?.CallDevToolsProtocolMethodAsync(Method, Json) ?? string.Empty;
+            }
+            catch (Exception _Exception) { return JsonSerializer.Serialize(new { Error = _Exception.Message }); }
+        }
+
+        Lazy<JsonSerializerOptions> DevToolsSerializer = new(() => new()
+        {
+            PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+            DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull
+        });
+
+        private readonly Dictionary<string, CoreWebView2DevToolsProtocolEventReceiver> DevToolsReceivers = [];
+        public void SubscribeDevToolsEvent(string Event, Action<string> Handler)
+        {
+            try
+            {
+                if (!DevToolsReceivers.TryGetValue(Event, out var Receiver))
+                {
+                    Receiver = BrowserCore.GetDevToolsProtocolEventReceiver(Event);
+                    DevToolsReceivers[Event] = Receiver;
+                }
+                Receiver.DevToolsProtocolEventReceived += (s, e) => Handler(e.ParameterObjectAsJson);
+            }
+            catch { }
+        }
+        public async Task<List<WebNavigationEntry>> GetNavigationHistoryAsync()
+        {
+            List<WebNavigationEntry> History = [];
+            try
+            {
+                string Json = await CallDevToolsAsync("Page.getNavigationHistory");
+                if (!string.IsNullOrWhiteSpace(Json))
+                {
+                    using JsonDocument Document = JsonDocument.Parse(Json);
+                    if (Document.RootElement.TryGetProperty("currentIndex", out var CurrentIndexElement) && Document.RootElement.TryGetProperty("entries", out var Entries))
+                    {
+                        int CurrentIndex = CurrentIndexElement.GetInt32();
+                        for (int i = 0; i < Entries.GetArrayLength(); i++)
+                        {
+                            var CurrentEntry = Entries[i];
+                            //string Url = CurrentEntry.TryGetProperty("url", out var UrlElement) ? UrlElement.GetString() ?? string.Empty : string.Empty;
+                            string UserTypedUrl = CurrentEntry.TryGetProperty("userTypedURL", out var UserTypedElement) ? UserTypedElement.GetString() ?? string.Empty : string.Empty;
+                            string Title = CurrentEntry.TryGetProperty("title", out var TitleElement) ? TitleElement.GetString() ?? string.Empty : string.Empty;
+                            int? ID = CurrentEntry.TryGetProperty("id", out var IDElement) ? IDElement.GetInt32() : null;
+                            History.Add(new WebNavigationEntry(i == CurrentIndex, UserTypedUrl, Title, ID));
+                        }
+                    }
+                }
+            }
+            catch { }
+            if (History.Count == 0)
+                History.Add(new WebNavigationEntry(true, Address, Title, null));
+            return History;
+        }
+
+        public async Task<long?> GetMemoryUsage()
+        {
+            IReadOnlyList<CoreWebView2ProcessExtendedInfo> Processes = await BrowserCore.Environment.GetProcessExtendedInfosAsync();
+            CoreWebView2ProcessExtendedInfo? TargetProcessInfo = Processes.FirstOrDefault(i => i.ProcessInfo.Kind == CoreWebView2ProcessKind.Renderer && i.AssociatedFrameInfos.Any(f => f.Source == BrowserCore.Source));
+            if (TargetProcessInfo == null)
+                return null;
+            using Process _Process = Process.GetProcessById(TargetProcessInfo.ProcessInfo.ProcessId);
+            _Process.Refresh();
+            return _Process.PrivateMemorySize64;
+        }
+
+        ChromiumEdgeCookieManager CookieManager;
+        public async Task<IWebCookieManager> GetCookieManager()
+        {
+            CookieManager ??= new ChromiumEdgeCookieManager(BrowserCore.CookieManager);
+            return CookieManager;
+        }
+
+        ChromiumEdgePermissionManager PermissionManager;
+        public async Task<IPermissionManager?> GetPermissionManager()
+        {
+            if (BrowserCore == null)
+                return null;
+            PermissionManager ??= new ChromiumEdgePermissionManager(BrowserCore);
+            return PermissionManager;
+        }
+
+        public FrameworkElement Control => Browser;
+
+        private bool _Disposed;
+
+        public void Dispose()
+        {
+            Dispose(true);
+            GC.SuppressFinalize(this);
+        }
+        protected virtual void Dispose(bool Disposing)
+        {
+            if (_Disposed) return;
+            if (Disposing)
+            {
+                WebViewManager.WebViews.Remove(this);
+                CoreWebView2 Core = BrowserCore;
+
+                Browser.CoreWebView2InitializationCompleted -= (s, e) => Browser?.Dispatcher.BeginInvoke(() => IsBrowserInitializedChanged?.Invoke(this, EventArgs.Empty));
+                if (Core != null && Browser.CoreWebView2 == Core)
+                {
+                    Core.IsDefaultDownloadDialogOpenChanged -= Core_IsDefaultDownloadDialogOpenChanged;
+
+                    Core.NavigationStarting -= Browser_NavigationStarting;
+                    Core.FrameNavigationStarting -= Browser_FrameNavigationStarting;
+                    Core.FrameNavigationCompleted -= Browser_FrameNavigationCompleted;
+                    Core.NavigationCompleted -= Browser_NavigationCompleted;
+                    Core.ServerCertificateErrorDetected -= Browser_ServerCertificateErrorDetected;
+
+                    Core.DocumentTitleChanged -= Browser_DocumentTitleChanged;
+                    Core.FaviconChanged -= Browser_FaviconChanged;
+                    Core.StatusBarTextChanged -= (s, e) => StatusMessage?.RaiseUIAsync(this, Core.StatusBarText);
+
+                    Core.PermissionRequested -= Browser_PermissionRequested;
+                    Core.ScriptDialogOpening -= Browser_ScriptDialogOpening;
+                    Core.NewWindowRequested -= Browser_NewWindowRequested;
+                    Core.ContainsFullScreenElementChanged -= (s, e) => FullscreenChanged?.RaiseUIAsync(this, Core.ContainsFullScreenElement);
+                    Core.WebResourceRequested -= Browser_WebStoreResourceRequested;
+                    Core.WebResourceRequested -= Browser_WebResourceRequested;
+                    Core.WebResourceResponseReceived -= Browser_WebResourceResponseReceived;
+                    if (Settings.JavaScriptMessage)
+                        Core.WebMessageReceived -= Browser_WebMessageReceived;
+
+                    Core.DownloadStarting -= Browser_DownloadStarting;
+
+                    Core.ContextMenuRequested -= Browser_ContextMenuRequested;
+                    Core.Find.ActiveMatchIndexChanged -= (s, e) => FindResult.RaiseUIAsync(this, new FindResult(Core.Find.ActiveMatchIndex, Core.Find.MatchCount));
+                    Core.Find.MatchCountChanged -= (s, e) => FindResult.RaiseUIAsync(this, new FindResult(Core.Find.ActiveMatchIndex, Core.Find.MatchCount));
+                    Core.ProcessFailed -= ProcessFailed;
+
+                    Core.BasicAuthenticationRequested -= Browser_BasicAuthenticationRequested;
+
+                    Core.LaunchingExternalUriScheme -= Browser_LaunchingExternalUriScheme;
+                    Core.SourceChanged -= Browser_SourceChanged;
+                    //Core.HistoryChanged -= Browser_HistoryChanged;
+                }
+                Browser.KeyDown -= (s, e) => HotKeyManager.HandleKeyDown(e);
+
+                if (Browser.Parent is Panel Parent)
+                    Parent.Children.Remove(Browser);
+                Browser.Dispose();
+                Browser = null;
+            }
+            _Disposed = true;
+        }
+    }
+
+    public class TridentWebView : IWebView, IDisposable
+    {
+        [ComVisible(true)]
+        public class Bridge
+        {
+            private readonly TridentWebView Parent;
+            public Bridge(TridentWebView _Parent) => Parent = _Parent;
+            public void postMessage(string message) => Parent.JavaScriptMessageReceived?.RaiseUIAsync(Parent, message);
+            /*public void audioChanged(int State)
+            {
+                Parent.SetAudioPlaying(State == 1);
+            }*/
+        }
+        /*public void SetAudioPlaying(bool Playing)
+        {
+            AudioPlaying = Playing;
+            AudioPlayingChanged?.RaiseUIAsync(this);
+        }*/
+
+        private static class SHDocVw
+        {
+            public enum OLECMDID
+            {
+                OLECMDID_SAVEAS = 4,
+                OLECMDID_PRINTPREVIEW = 7,
+                OLECMDID_OPTICAL_ZOOM = 63
+            }
+            public enum OLECMDEXECOPT
+            {
+                OLECMDEXECOPT_DONTPROMPTUSER = 2
+            }
+        }
+
+        private WebBrowser Browser;
+        dynamic? AxBrowser;
+        dynamic? BrowserCore;
+        private WebViewBrowserSettings Settings;
+        private readonly List<WebNavigationEntry> InitialUrls;
+
+        public TridentWebView(List<WebNavigationEntry> Urls = null, WebViewBrowserSettings _Settings = null)
+        {
+            InitialUrls = Urls ?? [new(true, "about:blank")];
+            //ExecuteScript(@"window.engine = { postMessage: function(message) { window.external.postMessage(message); } };");
+            Settings = _Settings ?? new WebViewBrowserSettings();
+            WebViewManager.WebViews.Add(this);
+            if (!WebViewManager.IsTridentInitialized)
+                WebViewManager.InitializeTrident();
+            Browser = new WebBrowser();
+
+            Browser.Loaded += Loaded;
+            Browser.Navigating += Navigating;
+            Browser.Navigated += Navigated;
+            Browser.LoadCompleted += LoadCompleted;
+            Browser.KeyDown += (s, e) => HotKeyManager.HandleKeyDown(e);
+
+            AxBrowser = typeof(WebBrowser).GetProperty("AxIWebBrowser2", BindingFlags.Instance | BindingFlags.NonPublic)?.GetValue(Browser, null);
+            BrowserCore = AxBrowser;
+            try
+            {
+                if (BrowserCore != null)
+                    BrowserCore.RegisterAsDropTarget = true;
+            }
+            catch { }
+
+            if (Settings.JavaScriptMessage)// || Settings.AudioListener)
+                Browser.ObjectForScripting = new Bridge(this);
+            ZoomFactor = 1;
+        }
+
+        private void StatusTextChange(string Text)
+        {
+            if (Text == "Done")
+                Text = string.Empty;
+            StatusMessage?.RaiseUIAsync(this, Text);
+        }
+
+        private void DocumentComplete(object pDisp, ref object URL)
+        {
+            Zoom(ZoomFactor);
+        }
+
+        /*private const string IERootKeyx32 = @"SOFTWARE\Microsoft\Internet Explorer\";
+        private const string IERootKeyx64 = @"SOFTWARE\Wow6432Node\Microsoft\Internet Explorer\";
+        private const string IEEmulationPath = @"MAIN\FeatureControl\FEATURE_BROWSER_EMULATION";
+        private const string IEEmulationPathx32 = IERootKeyx32 + IEEmulationPath;
+        private const string IEEmulationPathx64 = IERootKeyx64 + IEEmulationPath;*/
+
+        // private void SetSecureLockIcon(int SecureLockIcon) => IsSecure = (WebBrowserEncryptionLevel)SecureLockIcon != WebBrowserEncryptionLevel.Insecure;
+
+        /*//https://learn.microsoft.com/en-us/dotnet/api/system.windows.forms.webbrowserencryptionlevel
+        public enum WebBrowserEncryptionLevel
+        {
+            Insecure,
+            Mixed,
+            Unknown,
+            Bit40,
+            Bit56,
+            Fortezza,
+            Bit128
+        }*/
+
+        /*private void BeforeNavigate(string URL, int Flags, string TargetFrameName, ref object PostData, string Headers, ref bool Cancel)
+        {
+            //Headers += string.Format("User-Agent: {0}\r\n", UserAgent);
+        }*/
+
+        private void NavigateError(object pDisp, ref object URL, ref object Frame, ref object StatusCode, ref bool Cancel)
+        {
+            NavigationError?.RaiseUIAsync(this, new NavigationErrorEventArgs(ToWebErrorCode((int)StatusCode), string.Empty, (string)URL));
+        }
+
+
+
+        //https://learn.microsoft.com/en-us/previous-versions/bb268233(v=vs.85)
+        public static WebErrorCode ToWebErrorCode(int StatusCode)
+        {
+            return StatusCode switch
+            {
+                -2146697214 => WebErrorCode.InvalidUrl,
+                -2146697213 => WebErrorCode.Failed,
+                -2146697212 => WebErrorCode.ConnectionFailed,
+                -2146697211 => WebErrorCode.FileNotFound,
+                -2146697210 => WebErrorCode.FileNotFound,
+                -2146697209 => WebErrorCode.BlobReferencedFileUnavailable,
+                -2146697208 => WebErrorCode.Failed,
+                -2146697207 => WebErrorCode.MissingAuthCredentials,
+                -2146697206 => WebErrorCode.Failed,
+                -2146697205 => WebErrorCode.ConnectionTimedOut,
+                -2146697204 => WebErrorCode.InvalidUrl,
+                -2146697203 => WebErrorCode.UnknownUrlScheme,
+                -2146697202 => WebErrorCode.SslProtocolError,
+                -2146697201 => WebErrorCode.ContentDecodingFailed,
+                -2146697200 => WebErrorCode.ContentDecodingInitFailed,
+                -2146697196 => WebErrorCode.InvalidRedirect,
+                -2146697195 => WebErrorCode.UnsafeRedirect,
+                -2146697194 => WebErrorCode.Failed,
+                -2146697193 => WebErrorCode.Failed,
+                -2146697192 => WebErrorCode.Failed,
+                -2146697191 => WebErrorCode.CertInvalid,
+                -2146696960 => WebErrorCode.Failed,
+                -2146696704 => WebErrorCode.Failed,
+                -2146696448 => WebErrorCode.Failed,
+                -2146695936 => WebErrorCode.BlockedByClient,
+                -2146696192 => WebErrorCode.BlockedByClient,
+                _ => WebErrorCode.Failed
+            };
+        }
+
+        private void TitleChange(string Text)
+        {
+            Title = Text;
+            TitleChanged?.RaiseUIAsync(this, Text);
+        }
+
+        private void NewWindow(string URL, int Flags, string TargetFrameName, ref object PostData, string Headers, ref bool Processed)
+        {
+            Processed = true;
+            /*if (Regex.IsMatch(URL, "^.*javascript\\:.*$", RegexOptions.IgnoreCase))
+                return;*/
+            NewTabRequested?.RaiseUIAsync(this, new NewTabRequestEventArgs(URL, false, null));
+        }
+
+        /*public static void SetSilent(WebBrowser browser, bool silent)
+        {
+            IOleServiceProvider sp = browser.Document as IOleServiceProvider;
+            if (sp != null)
+            {
+                Guid IID_IWebBrowserApp = new Guid("0002DF05-0000-0000-C000-000000000046");
+                Guid IID_IWebBrowser2 = new Guid("D30C1661-CDAF-11d0-8A3E-00C04FC9E26E");
+                object webBrowser;
+                sp.QueryService(ref IID_IWebBrowserApp, ref IID_IWebBrowser2, out webBrowser);
+                if (webBrowser != null)
+                    webBrowser.GetType().InvokeMember("Silent", BindingFlags.Instance | BindingFlags.Public | BindingFlags.PutDispProperty, null, webBrowser, [silent]);
+            }
+        }
+        [ComImport, Guid("6D5140C1-7436-11CE-8034-00AA006009FA"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+        private interface IOleServiceProvider
+        {
+            [PreserveSig]
+            int QueryService([In] ref Guid guidService, [In] ref Guid riid, [MarshalAs(UnmanagedType.IDispatch)] out object ppvObject);
+        }*/
+
+        private void Navigated(object sender, NavigationEventArgs e)
+        {
+            try
+            {
+                FieldInfo FIComWebBrowser = typeof(WebBrowser).GetField("_axIWebBrowser2", BindingFlags.Instance | BindingFlags.NonPublic);
+                if (FIComWebBrowser == null) return;
+                object ComWebBrowser = FIComWebBrowser.GetValue(Browser);
+                if (ComWebBrowser == null) return;
+                ComWebBrowser.GetType().InvokeMember("Silent", BindingFlags.SetProperty, null, ComWebBrowser, [true]);
+            }
+            catch { }
+            //if (Settings.AudioListener)
+            //    ExecuteScript(Scripts.TridentAudioScript);
+        }
+
+        private async void Loaded(object sender, RoutedEventArgs e)
+        {
+            Browser.Loaded -= Loaded;
+            IsBrowserInitialized = true;
+            IsBrowserInitializedChanged?.Invoke(this, EventArgs.Empty);
+
+            Navigate(InitialUrls.Last().Url);
+        }
+
+        private void Navigating(object sender, NavigatingCancelEventArgs e)
+        {
+            Favicon = string.Empty;
+            FaviconChanged?.RaiseUIAsync(this, Favicon);
+            string Url = e.Uri?.AbsoluteUri ?? OverrideAddress;
+            BeforeNavigationEventArgs Args = new BeforeNavigationEventArgs(Url, true);
+            BeforeNavigation?.Invoke(this, Args);
+            if (Args.Cancel)
+            {
+                e.Cancel = true;
+                return;
+            }
+            if (!WebViewManager.RuntimeSettings.PDFViewer && e.Uri != null && e.Uri.Segments[^1].EndsWith(".pdf"))
+            {
+                e.Cancel = true;
+                Browser?.Dispatcher.BeginInvoke(() => WebViewManager.DownloadManager.StartDownloadAsync(Url, null, WebViewManager.RuntimeSettings.DownloadPrompt, "PDF File (*.pdf)|*.pdf"));
+                return;
+            }
+            if (Utils.IsCustomScheme(Url))
+            {
+                if (OverrideAddress != Url)
+                {
+                    e.Cancel = true;
+                    if (WebViewManager.Settings.Schemes.TryGetValue(Utils.GetScheme(Url), out var Handler))
+                    {
+                        OverrideAddress = Url;
+                        ProtocolResponse Response = Task.Run(() => Handler(Url, Settings.Private.ToInt().ToString())).GetAwaiter().GetResult();
+                        //TODO: Resolve relative path issue, base tag functionality does not apply for non-http schemes.
+                        //string BaseHref = Url.EndsWith('/') ? Url : Url + '/';
+                        //Browser.NavigateToString(Encoding.UTF8.GetString(Response.Data).Replace("<head>", $"<head>\n<base href=\"{BaseHref}\">"));
+                        Browser.NavigateToStream(new MemoryStream(Response.Data));
+                        if (Response.ErrorCode != WebErrorCode.None)
+                            NavigationError?.RaiseUIAsync(this, new NavigationErrorEventArgs(Response.ErrorCode, string.Empty, Url));
+                    }
+                }
+            }
+            else
+                OverrideAddress = null;
+            /*if (e.WebRequest != null)
+            {
+                IDictionary<string, string> Headers = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+                if (e.WebRequest.Headers != null)
+                {
+                    foreach (string Key in e.WebRequest.Headers.AllKeys)
+                        Headers[Key] = e.WebRequest.Headers[Key];
+                }
+                ResourceRequestType Type = e.WebRequest.Method.ToLowerInvariant() switch
+                {
+                    "get" => ResourceRequestType.MainFrame,
+                    "post" => ResourceRequestType.XMLHTTPRequest,
+                    "put" => ResourceRequestType.XMLHTTPRequest,
+                    "delete" => ResourceRequestType.XMLHTTPRequest,
+                    _ => ResourceRequestType.Object
+                };
+                var ResourceArgs = new ResourceRequestEventArgs(e.WebRequest.RequestUri.AbsoluteUri, e.Uri.AbsoluteUri, e.WebRequest.Method, Type, Headers);
+                ResourceRequested?.Invoke(this, ResourceArgs);
+                if (Args.Cancel)
+                {
+                    e.Cancel = true;
+                    return;
+                }
+            }*/
+            IsLoading = true;
+            FrameLoadStart?.RaiseUIAsync(this, e.Uri?.AbsoluteUri ?? Address);
+            LoadingStateChanged?.RaiseUIAsync(this, new LoadingStateResult(IsLoading, null));
+            //AxBrowser.Silent = true;
+        }
+        private void LoadCompleted(object sender, NavigationEventArgs e)
+        {
+            //TODO: Support ResponseIntercepted.
+            //ResourceResponded?.RaiseUIAsync(this, new ResourceRespondedResult(e.Uri?.AbsoluteUri ?? Address, ResourceRequestType.SubResource));
+            IsLoading = false;
+            FrameLoadEnd?.RaiseUIAsync(this, e.Uri?.AbsoluteUri ?? Address);
+            LoadingStateChanged?.RaiseUIAsync(this, new LoadingStateResult(IsLoading, null));
+            //TODO: Include http status code in result.
+
+            try
+            {
+                string Icon = Browser.InvokeScript("eval", Scripts.GetFaviconScript).ToString() ?? string.Empty;
+                if (Favicon != Icon)
+                {
+                    Favicon = Icon;
+                    if (!string.IsNullOrEmpty(Icon))
+                        FaviconChanged?.RaiseUIAsync(this, Icon);
+                }
+            }
+            catch { }
+        }
+
+        public WebEngineType Engine => WebEngineType.Trident;
+
+        private string? OverrideAddress = null;
+        public string Address
+        {
+            get => string.IsNullOrEmpty(OverrideAddress) ? (Browser.Source?.AbsoluteUri ?? InitialUrls.Last().Url) : OverrideAddress;
+            set => Navigate(value);
+        }
+        public string Title { get; private set; } = string.Empty;
+        public string Favicon { get; private set; } = string.Empty;
+
+        public bool CanGoBack => Browser.CanGoBack;
+        public bool CanGoForward => Browser.CanGoForward;
+        public bool CanReload => !IsLoading;
+        public bool IsLoading { get; private set; }
+        public bool IsBrowserInitialized { get; private set; }
+
+        public bool IsSecure { get; private set; }
+        public bool AudioPlaying { get; private set; }
+        public bool IsMuted
+        {
+            get => false;
+            set { }
+        }
+
+        private double _ZoomFactor = 1;
+        public double ZoomFactor
+        {
+            get => _ZoomFactor;
+            set
+            {
+                _ZoomFactor = value;
+                Zoom(value);
+            }
+        }
+
+        void Zoom(double Zoom)
+        {
+            try
+            {
+                //WARNING: Do not remove Int32
+                object ZoomLevel = (Int32)(Zoom * 100);
+                SafeExecWB(SHDocVw.OLECMDID.OLECMDID_OPTICAL_ZOOM, SHDocVw.OLECMDEXECOPT.OLECMDEXECOPT_DONTPROMPTUSER, ZoomLevel);
+                //https://weblog.west-wind.com/posts/2016/aug/22/detecting-and-setting-zoom-level-in-the-wpf-webbrowser-control
+                /*var wb = (dynamic)Browser.GetType().GetField("_axIWebBrowser2",
+          BindingFlags.Instance | BindingFlags.NonPublic)
+          .GetValue(Browser);
+                int zoomLevel = 100; // Between 10 and 1000
+                wb.ExecWB(63, 2, zoomLevel, ref zoomLevel);   // OLECMDID_OPTICAL_ZOOM (63) - don't prompt (2)*/
+            }
+            catch { }
+        }
+
+        private void SafeExecWB(SHDocVw.OLECMDID CommandID, SHDocVw.OLECMDEXECOPT ExecOpt = SHDocVw.OLECMDEXECOPT.OLECMDEXECOPT_DONTPROMPTUSER, object? Input = default, IntPtr Output = default)
+        {
+            try
+            {
+                if (Input == null)
+                    BrowserCore?.ExecWB(CommandID, ExecOpt);
+                else
+                    BrowserCore?.ExecWB(CommandID, ExecOpt, ref Input, Output);
+            }
+            catch { }
+        }
+        //https://github.com/tpn/winsdk-10/blob/9b69fd26ac0c7d0b83d378dba01080e93349c2ed/Include/10.0.10240.0/um/ExDisp.h#L375
+        public static class Navigate2Flags
+        {
+            public const int navOpenInNewWindow = 0x01;
+            public const int navNoHistory = 0x02;
+            public const int navNoReadFromCache = 0x04;
+            public const int navNoWriteToCache = 0x08;
+            public const int navAllowAutosearch = 0x10;
+            public const int navBrowserBar = 0x20;
+            public const int navHyperlink = 0x40;
+            public const int navEnforceRestricted = 0x80;
+            public const int navNewWindowsManaged = 0x0100;
+            public const int navUntrustedForDownload = 0x0200;
+            public const int navTrustedForActiveX = 0x0400;
+            public const int navOpenInNewTab = 0x0800;
+            public const int navOpenInBackgroundTab = 0x1000;
+            public const int navKeepWordWheelText = 0x2000;
+            public const int navVirtualTab = 0x4000;
+            public const int navBlockRedirectsXDomain = 0x8000;
+            public const int navOpenNewForegroundTab = 0x10000;
+        }
+        //about:blank doesn't work?
+        public void Navigate(string Url)
+        {
+            if (Url != Address)
+                AddressChanged?.RaiseUIAsync(this, Url);
+            try
+            {
+                if (Settings.Private && BrowserCore != null)
+                {
+                    object flags = Navigate2Flags.navNoHistory | Navigate2Flags.navNoReadFromCache | Navigate2Flags.navNoWriteToCache;
+                    object targetFrame = Type.Missing;
+                    object postData = Type.Missing;
+                    object headers = Type.Missing;
+                    BrowserCore.Navigate(Url, ref flags, ref targetFrame, ref postData, ref headers);
+                }
+                else
+                    Browser?.Navigate(Url);
+            }
+            catch { }
+        }
+        public void Back() { if (CanGoBack) Browser?.GoBack(); }
+        public void Forward() { if (CanGoForward) Browser?.GoForward(); }
+        public void Refresh(bool IgnoreCache = false, bool ClearCache = false) { if (string.IsNullOrEmpty(OverrideAddress)) Browser?.Refresh(); }
+        public void Stop() => AxBrowser.Stop();
+        public void Print() => SafeExecWB(SHDocVw.OLECMDID.OLECMDID_PRINTPREVIEW, SHDocVw.OLECMDEXECOPT.OLECMDEXECOPT_DONTPROMPTUSER);
+        public void Find(string Text, bool Forward, bool MatchCase, bool FindNext) { }
+        public void StopFind() { }
+        public void SaveAs() => SafeExecWB(SHDocVw.OLECMDID.OLECMDID_SAVEAS, SHDocVw.OLECMDEXECOPT.OLECMDEXECOPT_DONTPROMPTUSER);
+        public void OpenTaskManager() { }
+
+        public void Cut() => Browser.InvokeScript("execCommand", "cut", false, null);
+        public void Copy() => Browser.InvokeScript("execCommand", "copy", false, null);
+        public void Paste() => Browser.InvokeScript("execCommand", "paste", false, null);
+        public void Delete() => Browser.InvokeScript("execCommand", "delete", false, null);
+        public void SelectAll() => Browser.InvokeScript("execCommand", "undo", false, null);
+        public void Undo() => Browser.InvokeScript("execCommand", "redo", false, null);
+        public void Redo() => Browser.InvokeScript("execCommand", "selectAll", false, null);
+
+        public event EventHandler AudioPlayingChanged;
+        public event EventHandler<bool> FullscreenChanged;
+        public event EventHandler<ScriptDialogEventArgs> ScriptDialogOpened;
+        public event EventHandler<BeforeNavigationEventArgs> BeforeNavigation;
+        public event EventHandler<NewTabRequestEventArgs> NewTabRequested;
+        public event EventHandler<string> FrameLoadStart;
+        public event EventHandler<string> FrameLoadEnd;
+        public event EventHandler IsBrowserInitializedChanged;
+        public event EventHandler<LoadingStateResult> LoadingStateChanged;
+        public event EventHandler<string> TitleChanged;
+        public event EventHandler<string> StatusMessage;
+        public event EventHandler<string> FaviconChanged;
+        public event EventHandler<string> AddressChanged;
+        public event EventHandler<FindResult> FindResult;
+        public event EventHandler<string> JavaScriptMessageReceived;
+        public event EventHandler<ResourceRequestEventArgs> ResourceRequested;
+        //public event EventHandler<ResourceRespondedResult> ResourceResponded;
+        public event EventHandler<ResponseInterceptedResult> ResponseIntercepted;
+        public event EventHandler<ResourceLoadedResult> ResourceLoaded;
+        public event EventHandler<PermissionRequestedEventArgs> PermissionRequested;
+
+        public event EventHandler<WebContextMenuEventArgs> ContextMenuRequested;
+        public event EventHandler<WebAuthenticationRequestedEventArgs> AuthenticationRequested;
+        public event EventHandler<ExternalProtocolEventArgs> ExternalProtocolRequested;
+        public event EventHandler<NavigationErrorEventArgs> NavigationError;
+
+        public void Download(string Url) => WebViewManager.DownloadManager.StartDownloadAsync(Url, null, WebViewManager.RuntimeSettings.DownloadPrompt, null);
+
+        public void ExecuteScript(string Script) { try { Browser?.InvokeScript("execScript", [Script, "JavaScript"]); } catch { } }
+
+        public bool CanExecuteJavascript => Browser.Document != null;
+        public Task<object?> EvaluateScriptAsync(string Script)
+        {
+            var Task = new TaskCompletionSource<object?>();
+            Browser?.Dispatcher.InvokeAsync(() =>
+            {
+                try
+                {
+                    var WrappedScript = $"JSON.stringify((function(){{ return {Script}; }})())";
+                    var Result = Browser?.InvokeScript("eval", [WrappedScript])?.ToString();
+                    if (string.IsNullOrWhiteSpace(Result) || Result == "null")
+                    {
+                        Task.SetResult(null);
+                        return;
+                    }
+                    var Object = JsonSerializer.Deserialize<object>(Result);
+                    Task.SetResult(Object);
+                }
+                catch// (Exception ex)
+                {
+                    //Task.SetException(ex);
+                    Task.SetResult(null);
+                }
+            });
+            return Task.Task;
+        }
+
+        public async Task<byte[]> TakeScreenshotAsync(WebScreenshotFormat Format, Rect? Viewport = null)
+        {
+            var HWND = Browser.Handle;
+            if (HWND == IntPtr.Zero) return [];
+
+            var X = (int)(Viewport?.X ?? 0);
+            var Y = (int)(Viewport?.Y ?? 0);
+            var Width = (int)(Viewport?.Width ?? Browser.ActualWidth);
+            var Height = (int)(Viewport?.Height ?? Browser.ActualHeight);
+
+            var hdcSrc = DllUtils.GetWindowDC(HWND);
+            var hdcDest = DllUtils.CreateCompatibleDC(hdcSrc);
+            var hBitmap = DllUtils.CreateCompatibleBitmap(hdcSrc, Width, Height);
+            var hOld = DllUtils.SelectObject(hdcDest, hBitmap);
+            DllUtils.BitBlt(hdcDest, 0, 0, Width, Height, hdcSrc, X, Y, DllUtils.SRCCOPY);
+            DllUtils.SelectObject(hdcDest, hOld);
+            DllUtils.DeleteDC(hdcDest);
+            DllUtils.ReleaseDC(HWND, hdcSrc);
+
+            var BitmapSource = Imaging.CreateBitmapSourceFromHBitmap(hBitmap, IntPtr.Zero, Int32Rect.Empty, BitmapSizeOptions.FromEmptyOptions());
+            DllUtils.DeleteObject(hBitmap);
+
+            BitmapEncoder Encoder = Format switch
+            {
+                WebScreenshotFormat.PNG => new PngBitmapEncoder(),
+                WebScreenshotFormat.JPEG => new JpegBitmapEncoder(),
+                _ => new PngBitmapEncoder()
+                //TODO: Implement WebP support.
+            };
+            Encoder.Frames.Add(BitmapFrame.Create(BitmapSource));
+            using MemoryStream Stream = new();
+            Encoder.Save(Stream);
+            return Stream.ToArray();
+        }
+        public async Task<string> GetSourceAsync() => (await EvaluateScriptAsync("document.documentElement.outerHTML")).ToString() ?? string.Empty;
+        public async Task<string> CallDevToolsAsync(string Method, object? Parameters = null) => string.Empty;
+        public void SubscribeDevToolsEvent(string Event, Action<string> Handler) { }
+        public async Task<List<WebNavigationEntry>> GetNavigationHistoryAsync()
+        {
+            List<WebNavigationEntry> History = [];
+            History.Add(new WebNavigationEntry(true, Address, Title, null));
+            return History;
+        }
+
+        public async Task<long?> GetMemoryUsage() => null;
+
+        TridentCookieManager CookieManager;
+        public async Task<IWebCookieManager> GetCookieManager()
+        {
+            CookieManager ??= new TridentCookieManager();
+            return CookieManager;
+        }
+
+        TridentPermissionManager PermissionManager;
+        public async Task<IPermissionManager?> GetPermissionManager()
+        {
+            PermissionManager ??= new TridentPermissionManager();
+            return PermissionManager;
+        }
+
+        public FrameworkElement Control => Browser;
+
+        private bool _Disposed;
+
+        public void Dispose()
+        {
+            Dispose(true);
+            GC.SuppressFinalize(this);
+        }
+        protected virtual void Dispose(bool Disposing)
+        {
+            if (_Disposed) return;
+            if (Disposing)
+            {
+                WebViewManager.WebViews.Remove(this);
+                Browser.Navigating -= Navigating;
+                Browser.LoadCompleted -= LoadCompleted;
+                try
+                {
+                    Browser.Navigate("about:blank");
+                    Browser.Source = null;
+                }
+                catch { }
+                if (Browser.Document != null)
+                {
+                    try { Marshal.FinalReleaseComObject(Browser.Document); }
+                    catch { }
+                }
+                if (Browser.Parent is Panel Parent)
+                    Parent.Children.Remove(Browser);
+                Browser = null;
+            }
+            _Disposed = true;
+        }
+    }
+}

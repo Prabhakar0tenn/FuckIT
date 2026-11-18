@@ -1,0 +1,108 @@
+﻿/*Copyright © SLT Softwares. All rights reserved.
+Use of this source code is governed by a GNU license that can be found in the LICENSE file.*/
+
+using System.Globalization;
+using System.Security.Cryptography;
+using System.Text;
+using System.Windows;
+using System.Windows.Data;
+using System.Windows.Media;
+
+namespace SLBr.Controls
+{
+    public class LessThanConverter : IValueConverter
+    {
+        public double Threshold { get; set; } = 60;
+
+        public object Convert(object Value, Type TargetType, object Parameter, CultureInfo Culture)
+        {
+            if (Value is double Length)
+                return Length < Threshold;
+            return false;
+        }
+        public object ConvertBack(object Value, Type TargetType, object Parameter, CultureInfo Culture) =>
+            throw new NotImplementedException();
+    }
+
+    public class InvertBooleanConverter : IValueConverter
+    {
+        public object Convert(object Value, Type TargetType, object Parameter, CultureInfo Culture) =>
+            !(bool)Value;
+
+        public object ConvertBack(object Value, Type TargetType, object Parameter, CultureInfo Culture) =>
+            throw new NotImplementedException();
+    }
+
+    public class TextIconToBooleanConverter : IValueConverter
+    {
+        public bool Invert { get; set; } = false;
+        public object Convert(object Value, Type TargetType, object Parameter, CultureInfo Culture)
+        {
+            string? Str = Value as string;
+            if (string.IsNullOrEmpty(Str)) return Invert;
+
+            char FirstCharacter = Str[0];
+            bool Result = Str.Length == 1 || (FirstCharacter >= 0xE000 && FirstCharacter <= 0xF8FF) || (FirstCharacter >= 0x2600 && FirstCharacter <= 0x26FF);
+
+            return Invert ? !Result : Result;
+        }
+
+        public object ConvertBack(object Value, Type TargetType, object Parameter, CultureInfo Culture) =>
+            throw new NotImplementedException();
+    }
+
+    public class BooleanToVisibilityConverter : IValueConverter
+    {
+        public bool Invert { get; set; } = false;
+        public object Convert(object Value, Type TargetType, object Parameter, CultureInfo Culture) =>
+            (Invert ? !(bool)Value : (bool)Value) ? Visibility.Visible : Visibility.Collapsed;
+
+        public object ConvertBack(object Value, Type TargetType, object Parameter, CultureInfo Culture) =>
+            throw new NotImplementedException();
+    }
+    public class NullToVisibilityConverter : IValueConverter
+    {
+        public bool Invert { get; set; } = false;
+        public object Convert(object Value, Type TargetType, object Parameter, CultureInfo Culture) =>
+            (Invert ? Value == null : Value != null) ? Visibility.Visible : Visibility.Collapsed;
+        public object ConvertBack(object Value, Type TargetType, object Parameter, CultureInfo Culture) =>
+            throw new NotImplementedException();
+    }
+    
+    public class SubtractConverter : IValueConverter
+    {
+        public object Convert(object Value, Type TargetType, object Parameter, CultureInfo Culture) =>
+            (double)Value - double.Parse((string)Parameter);
+        public object ConvertBack(object Value, Type TargetType, object Parameter, CultureInfo Culture) =>
+            throw new NotImplementedException();
+    }
+
+    public class StringToColorConverter : IValueConverter
+    {
+        public object Convert(object Value, Type TargetType, object Parameter, CultureInfo Culture)
+        {
+            if (Value == null)
+                return Brushes.Gray;
+
+            float Brightness = Parameter == null ? 1 : float.Parse((string)Parameter);
+            ReadOnlySpan<byte> Hash = MD5.HashData(Encoding.UTF8.GetBytes(Value.ToString()));
+
+            byte R = (byte)((Hash[0] % 128 + 64) * Brightness);
+            byte G = (byte)((Hash[1] % 128 + 64) * Brightness);
+            byte B = (byte)((Hash[2] % 128 + 64) * Brightness);
+
+            return new SolidColorBrush(Color.FromRgb(R, G, B));
+        }
+        public object ConvertBack(object Value, Type TargetType, object Parameter, CultureInfo Culture) =>
+            throw new NotImplementedException();
+    }
+
+    public class PasswordTextConverter : IValueConverter
+    {
+        public object Convert(object Value, Type TargetType, object Parameter, CultureInfo Culture) =>
+            Value?.ToString() ?? string.Empty;
+
+        public object ConvertBack(object Value, Type TargetType, object Parameter, CultureInfo Culture) =>
+            Value?.ToString() ?? string.Empty;
+    }
+}

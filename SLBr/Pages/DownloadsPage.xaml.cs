@@ -1,0 +1,179 @@
+﻿/*Copyright © SLT Softwares. All rights reserved.
+Use of this source code is governed by a GNU license that can be found in the LICENSE file.*/
+
+using SLBr.Controls;
+using SLBr.WebView;
+using System.Diagnostics;
+using System.Windows;
+using System.Windows.Controls;
+using System.Windows.Input;
+using System.Windows.Media;
+
+namespace SLBr.Pages
+{
+    /// <summary>
+    /// Interaction logic for Settings.xaml
+    /// </summary>
+    public partial class DownloadsPage : UserControl, IPageOverlay
+    {
+        public DownloadsPage()
+        {
+            InitializeComponent();
+        }
+
+        public void Initialize(Browser _BrowserView)
+        {
+            BrowserView = _BrowserView;
+        }
+
+        protected override void OnMouseRightButtonUp(MouseButtonEventArgs e)
+        {
+            base.OnMouseRightButtonUp(e);
+            if (e.Handled) return;
+            var (Ancestor, HasContextMenu) = Utils.FindAncestorContextMenu(e.OriginalSource as DependencyObject);
+            if (HasContextMenu)
+                return;
+            if (Ancestor != null && !HasContextMenu && Ancestor is TextBlock _TextBlock)
+            {
+                string SelectionText = TextBlockSelectionBehaviour.GetSelectedText(_TextBlock);
+                if (!string.IsNullOrEmpty(SelectionText))
+                {
+                    BrowserView.WebView_ContextMenuRequested(Ancestor, new WebContextMenuEventArgs() { MenuType = WebContextMenuType.Selection, FrameUrl = BrowserView.Address, SelectionText = SelectionText });
+                    return;
+                }
+            }
+            BrowserView.WebView_ContextMenuRequested(this, new WebContextMenuEventArgs() { MenuType = WebContextMenuType.Page, FrameUrl = BrowserView.Address });
+        }
+
+        public void OnNavigated() { }
+
+        public void Dispose()
+        {
+            DownloadsList.ItemsSource = null;
+            GC.SuppressFinalize(this);
+        }
+
+        Browser BrowserView;
+
+        private void Page_Loaded(object sender, RoutedEventArgs e)
+        {
+            DownloadsList.ItemsSource = App.Instance.VisibleDownloads;
+            ApplyTheme(App.Instance.CurrentTheme);
+        }
+
+        public void ApplyTheme(Theme _Theme)
+        {
+            Resources["PrimaryBrushColor"] = _Theme.PrimaryColor;
+            Resources["SecondaryBrushColor"] = _Theme.SecondaryColor;
+            Resources["BorderBrushColor"] = _Theme.BorderColor;
+            Resources["GrayBrushColor"] = _Theme.GrayColor;
+            Resources["FontBrushColor"] = _Theme.FontColor;
+            Resources["IndicatorBrushColor"] = _Theme.IndicatorColor;
+        }
+
+        private void DownloadsFolderButton_Click(object sender, RoutedEventArgs e)
+        {
+            Process.Start(new ProcessStartInfo("explorer.exe", $"/select, \"{WebViewManager.RuntimeSettings.DownloadFolderPath}\"") { UseShellExecute = true });
+        }
+
+        private void DeleteSelectedButton_Click(object sender, RoutedEventArgs e)
+        {
+            List<DownloadEntry> Selected = DownloadsList.SelectedItems.Cast<DownloadEntry>().Where(i => i.Stop == Visibility.Collapsed).ToList();
+            foreach (DownloadEntry DownloadsEntry in Selected)
+            {
+                App.Instance.VisibleDownloads.Remove(DownloadsEntry);
+                BrowserView.SetDownloadsButtonVisibility();
+            }
+        }
+
+        private void ResumeSingleButton_Click(object sender, RoutedEventArgs e)
+        {
+            if (sender is Button _Button && _Button.DataContext is DownloadEntry DownloadsEntry)
+            {
+                try
+                {
+                    App.Instance.Downloads.GetValueOrDefault(DownloadsEntry.ID)?.Resume();
+                }
+                catch { }
+            }
+        }
+
+        private void PauseSingleButton_Click(object sender, RoutedEventArgs e)
+        {
+            if (sender is Button _Button && _Button.DataContext is DownloadEntry DownloadsEntry)
+            {
+                try
+                {
+                    App.Instance.Downloads.GetValueOrDefault(DownloadsEntry.ID)?.Pause();
+                }
+                catch { }
+            }
+        }
+
+        private void CancelSingleButton_Click(object sender, RoutedEventArgs e)
+        {
+            if (sender is Button _Button && _Button.DataContext is DownloadEntry DownloadsEntry)
+            {
+                try
+                {
+                    App.Instance.Downloads.GetValueOrDefault(DownloadsEntry.ID)?.Cancel();
+                }
+                catch { }
+            }
+        }
+
+        private void OpenSingleButton_Click(object sender, RoutedEventArgs e)
+        {
+            if (sender is Button _Button && _Button.DataContext is DownloadEntry DownloadsEntry)
+                Process.Start(new ProcessStartInfo("explorer.exe", $"/select, \"{App.Instance.Downloads.GetValueOrDefault(DownloadsEntry.ID).FullPath}\"") { UseShellExecute = true });
+        }
+
+        private void DeleteSingleButton_Click(object sender, RoutedEventArgs e)
+        {
+            if (sender is Button _Button && _Button.DataContext is DownloadEntry DownloadsEntry && DownloadsEntry.Stop == Visibility.Collapsed)
+            {
+                App.Instance.VisibleDownloads.Remove(DownloadsEntry);
+                BrowserView.SetDownloadsButtonVisibility();
+            }
+        }
+
+        private void DownloadsList_SelectionChanged(object sender, SelectionChangedEventArgs e)
+        {
+            DeleteSelectedButton.Visibility = DownloadsList.SelectedItems.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
+        }
+
+        private void DownloadsList_KeyDown(object sender, KeyEventArgs e)
+        {
+            if (e.Key == Key.Delete && DownloadsList.SelectedItems.Count > 0)
+            {
+                DeleteSelectedButton_Click(sender, e);
+                e.Handled = true;
+            }
+        }
+
+        private void SearchBox_TextChanged(object sender, TextChangedEventArgs e)
+        {
+            string SearchText = SearchBox.Text.ToLowerInvariant();
+            if (SearchText.Length == 0)
+                DownloadsList.ItemsSource = App.Instance.VisibleDownloads;
+            else
+                DownloadsList.ItemsSource = App.Instance.VisibleDownloads.Where(i => i.FileName?.ToLowerInvariant().Contains(SearchText) ?? false);
+        }
+
+        private void ListBoxItem_DeselectPreviewMouseLeftButtonDown(object sender, MouseButtonEventArgs e)
+        {
+            DependencyObject ClickedElement = e.OriginalSource as DependencyObject;
+            while (ClickedElement != null && ClickedElement != sender)
+            {
+                if (ClickedElement is Button)
+                    return;
+                ClickedElement = VisualTreeHelper.GetParent(ClickedElement);
+            }
+            if (sender is ListBoxItem Item && Item.IsSelected)
+            {
+                Item.IsSelected = false;
+                e.Handled = true;
+            }
+        }
+    }
+}
