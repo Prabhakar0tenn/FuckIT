@@ -109,6 +109,7 @@ for /f "delims=" %%F in ('dir /b /s "%REPO_DIR%\SLBr\bin\Release\SLBr.exe" 2^>nu
 
 :FoundExe
 for %%D in ("%EXE_PATH%") do cd /d "%%~dpD"
+taskkill /F /IM SLBr.exe >nul 2>&1
 start "" "%EXE_PATH%"
 exit /b 0
 ```
