@@ -58,7 +58,7 @@
 
   <ItemGroup>
     <Content Include="Resources\SLBr.ico">
-      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </Content>
   </ItemGroup>
 
